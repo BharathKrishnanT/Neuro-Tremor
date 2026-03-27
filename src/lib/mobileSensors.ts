@@ -8,6 +8,9 @@ class MobileSensorService {
 
   private lastMotion = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 };
   private lastOrientation = { alpha: 0, beta: 0, gamma: 0 };
+  
+  // Smoothing factor for low-pass filter (0.0 to 1.0). Lower = smoother/less sensitive.
+  private smoothingFactor = 0.15;
 
   async requestPermission(): Promise<boolean> {
     // iOS 13+ requires explicit permission for DeviceMotion
@@ -54,10 +57,14 @@ class MobileSensorService {
   }
 
   private handleOrientation = (event: DeviceOrientationEvent) => {
+    const newAlpha = event.alpha || 0;
+    const newBeta = event.beta || 0;
+    const newGamma = event.gamma || 0;
+
     this.lastOrientation = {
-      alpha: event.alpha || 0,
-      beta: event.beta || 0,
-      gamma: event.gamma || 0
+      alpha: this.lastOrientation.alpha + this.smoothingFactor * (newAlpha - this.lastOrientation.alpha),
+      beta: this.lastOrientation.beta + this.smoothingFactor * (newBeta - this.lastOrientation.beta),
+      gamma: this.lastOrientation.gamma + this.smoothingFactor * (newGamma - this.lastOrientation.gamma)
     };
   };
 
@@ -65,13 +72,21 @@ class MobileSensorService {
     const acc = event.accelerationIncludingGravity;
     const rot = event.rotationRate;
 
+    const newAx = Number(acc?.x) || 0;
+    const newAy = Number(acc?.y) || 0;
+    const newAz = Number(acc?.z) || 0;
+    const newGx = Number(rot?.alpha) || 0;
+    const newGy = Number(rot?.beta) || 0;
+    const newGz = Number(rot?.gamma) || 0;
+
+    // Apply low-pass filter to smooth out jitter and reduce extreme sensitivity
     this.lastMotion = {
-      ax: Number(acc?.x) || 0,
-      ay: Number(acc?.y) || 0,
-      az: Number(acc?.z) || 0,
-      gx: Number(rot?.alpha) || 0,
-      gy: Number(rot?.beta) || 0,
-      gz: Number(rot?.gamma) || 0
+      ax: this.lastMotion.ax + this.smoothingFactor * (newAx - this.lastMotion.ax),
+      ay: this.lastMotion.ay + this.smoothingFactor * (newAy - this.lastMotion.ay),
+      az: this.lastMotion.az + this.smoothingFactor * (newAz - this.lastMotion.az),
+      gx: this.lastMotion.gx + this.smoothingFactor * (newGx - this.lastMotion.gx),
+      gy: this.lastMotion.gy + this.smoothingFactor * (newGy - this.lastMotion.gy),
+      gz: this.lastMotion.gz + this.smoothingFactor * (newGz - this.lastMotion.gz)
     };
   };
 
