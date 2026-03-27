@@ -488,6 +488,9 @@ function App() {
     try {
       await signInWithGoogle();
     } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') {
+        return; // User intentionally closed the popup, ignore
+      }
       console.error("Sign in failed:", error);
       setErrorModal({
         title: "Sign In Failed",
