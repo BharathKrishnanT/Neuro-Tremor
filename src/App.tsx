@@ -1,0 +1,796 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { serialService, SensorData } from './lib/serial';
+import { bleService } from './lib/ble';
+import { mobileSensorService } from './lib/mobileSensors';
+import { mlService } from './lib/mlService';
+import { LiveChart } from './components/LiveChart';
+import { TremorAnalysis } from './components/TremorAnalysis';
+import { DatasetUploader } from './components/DatasetUploader';
+import { DatasetSummary } from './components/DatasetSummary';
+import { RecoveryTrendChart } from './components/RecoveryTrendChart';
+import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText } from 'lucide-react';
+import { generateClinicalReport } from './lib/reportGenerator';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+export interface Session {
+  id: string;
+  timestamp: number;
+  duration: number;
+  severity: string;
+  stage: string;
+  rms: number;
+  frequency: number;
+  data: SensorData[];
+}
+
+function App() {
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [data, setData] = useState<SensorData[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedSessions, setRecordedSessions] = useState<Session[]>([]);
+  const [permissionError, setPermissionError] = useState(false);
+  const [mlSeverity, setMlSeverity] = useState<number>(0);
+  const isInferenceRunning = useRef(false);
+  const [loadedDataset, setLoadedDataset] = useState<SensorData[] | null>(null);
+  const [playbackIndex, setPlaybackIndex] = useState(0);
+  const [isPlayingDataset, setIsPlayingDataset] = useState(false);
+  const [isPausedDataset, setIsPausedDataset] = useState(false);
+  
+  const simulationInterval = useRef<NodeJS.Timeout | null>(null);
+  const playbackInterval = useRef<NodeJS.Timeout | null>(null);
+  const uiUpdateInterval = useRef<NodeJS.Timeout | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+  const recordingBuffer = useRef<SensorData[]>([]);
+  const uiBuffer = useRef<SensorData[]>([]);
+  const recordingStartTime = useRef<number>(0);
+
+  // Data buffer limit
+  const MAX_POINTS = 100;
+
+  // Decouple high-frequency data from React state updates
+  useEffect(() => {
+    uiUpdateInterval.current = setInterval(() => {
+      if (uiBuffer.current.length === 0) return;
+      
+      const newPoints = [...uiBuffer.current];
+      uiBuffer.current = [];
+
+      setData(prev => {
+        const updated = [...prev, ...newPoints];
+        if (updated.length > MAX_POINTS) {
+          return updated.slice(updated.length - MAX_POINTS);
+        }
+        return updated;
+      });
+    }, 100); // Update UI at 10Hz
+
+    return () => {
+      if (uiUpdateInterval.current) clearInterval(uiUpdateInterval.current);
+    };
+  }, []);
+
+  // Initialize ML Model and load sessions
+  useEffect(() => {
+    mlService.loadModel('/model/model.json').then((success) => {
+      if (success) {
+        console.log("ML Model loaded successfully");
+      }
+    });
+
+    const saved = localStorage.getItem('neurotremor_sessions');
+    if (saved) {
+      try {
+        setRecordedSessions(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to load sessions", e);
+      }
+    }
+  }, []);
+
+  // Save sessions to localStorage
+  useEffect(() => {
+    localStorage.setItem('neurotremor_sessions', JSON.stringify(recordedSessions));
+  }, [recordedSessions]);
+
+  // Run ML Inference periodically
+  useEffect(() => {
+    if (data.length === 0 || data.length % 20 !== 0) return;
+    
+    // Run inference every ~1 second (assuming 20Hz, 20 points is 1 second)
+    const runInference = async () => {
+      if (isInferenceRunning.current) return;
+      isInferenceRunning.current = true;
+      try {
+        const features = mlService.extractFeatures(data);
+        const severity = await mlService.predictSeverity(features);
+        if (!Number.isNaN(severity)) {
+          setMlSeverity(severity);
+        }
+      } catch (error) {
+        console.error('Inference error:', error);
+      } finally {
+        isInferenceRunning.current = false;
+      }
+    };
+
+    runInference();
+  }, [data.length]); // Run every time data length changes, but guarded by % 20
+
+  // Metrics calculation
+  const metrics = React.useMemo(() => {
+    if (data.length < 10) return { rms: 0, frequency: 0, intensity: 'Normal', stage: 'Normal', recoveryRate: 0 };
+
+    const features = mlService.extractFeatures(data);
+    const stage = mlService.getStage(mlSeverity);
+    
+    let intensity = 'Normal';
+    if (mlSeverity >= 3) intensity = 'Severe';
+    else if (mlSeverity >= 2) intensity = 'Moderate';
+    else if (mlSeverity >= 1) intensity = 'Mild';
+
+    // Calculate recovery rate compared to the very first session
+    let recoveryRate = 0;
+    if (recordedSessions.length > 0) {
+      const firstSession = recordedSessions[recordedSessions.length - 1];
+      if (firstSession.rms > 0 && !Number.isNaN(features.rms)) {
+        // Recovery is positive if current RMS is lower than initial
+        recoveryRate = ((firstSession.rms - features.rms) / firstSession.rms) * 100;
+      }
+    }
+
+    return { 
+      rms: Number.isNaN(features.rms) ? 0 : features.rms, 
+      frequency: Number.isNaN(features.frequency) ? 0 : features.frequency, 
+      intensity, 
+      stage, 
+      recoveryRate: Number.isNaN(recoveryRate) ? 0 : recoveryRate 
+    };
+  }, [data, mlSeverity, recordedSessions]);
+
+  const [isIframe, setIsIframe] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.self !== window.top) {
+        setIsIframe(true);
+      }
+    } catch (e) {
+      setIsIframe(true);
+    }
+  }, []);
+
+  const [hasGyro, setHasGyro] = useState(false);
+  const [hasMag, setHasMag] = useState(false);
+
+  const handleData = useCallback((newData: SensorData) => {
+    uiBuffer.current.push(newData);
+    
+    if (isRecording) {
+      recordingBuffer.current.push(newData);
+    }
+
+    if (!hasGyro && (Math.abs(newData.gx) > 0.01 || Math.abs(newData.gy) > 0.01 || Math.abs(newData.gz) > 0.01)) {
+      setHasGyro(true);
+    }
+    if (!hasMag && (Math.abs(newData.mx) > 0.01 || Math.abs(newData.my) > 0.01 || Math.abs(newData.mz) > 0.01)) {
+      setHasMag(true);
+    }
+  }, [hasGyro, hasMag, isRecording]);
+
+  useEffect(() => {
+    // Serial Listeners
+    serialService.onData(handleData);
+    serialService.onError((err) => {
+      console.error("Serial Error:", err);
+      setIsConnected(false);
+      setConnectionType(null);
+    });
+
+    // BLE Listeners
+    bleService.onData(handleData);
+    bleService.onError((err) => {
+      console.error("BLE Error:", err);
+      setIsConnected(false);
+      setConnectionType(null);
+    });
+
+    // Mobile Listeners
+    mobileSensorService.onData(handleData);
+    mobileSensorService.onError((err) => {
+      console.error("Mobile Sensor Error:", err);
+      setIsConnected(false);
+      setConnectionType(null);
+    });
+
+    return () => {
+      serialService.disconnect();
+      bleService.disconnect();
+      mobileSensorService.stop();
+    };
+  }, [handleData]);
+
+  const connectSerial = async () => {
+    try {
+      setPermissionError(false);
+      await serialService.connect();
+      setIsConnected(true);
+      setConnectionType('serial');
+      setIsSimulating(false);
+    } catch (err: any) {
+      console.error(err);
+      if (err.name === 'SecurityError' || err.message?.includes('permissions policy')) {
+        setPermissionError(true);
+      } else {
+        alert("Failed to connect to serial device. " + err.message);
+      }
+    }
+  };
+
+  const connectBLE = async () => {
+    try {
+      setPermissionError(false);
+      await bleService.connect();
+      setIsConnected(true);
+      setConnectionType('ble');
+      setIsSimulating(false);
+    } catch (err: any) {
+      console.error(err);
+      if (err.name === 'SecurityError' || err.message?.includes('permissions policy')) {
+        setPermissionError(true);
+      } else {
+        alert("Failed to connect via Bluetooth. " + err.message);
+      }
+    }
+  };
+
+  const connectMobile = async () => {
+    try {
+      setPermissionError(false);
+      await mobileSensorService.start();
+      setIsConnected(true);
+      setConnectionType('mobile');
+      setIsSimulating(false);
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to access mobile sensors. " + err.message);
+    }
+  };
+
+  const disconnect = async () => {
+    if (connectionType === 'serial') await serialService.disconnect();
+    if (connectionType === 'ble') await bleService.disconnect();
+    if (connectionType === 'mobile') mobileSensorService.stop();
+    if (isSimulating) {
+      if (simulationInterval.current) clearInterval(simulationInterval.current);
+      setIsSimulating(false);
+    }
+    stopDatasetPlayback();
+    setIsConnected(false);
+    setConnectionType(null);
+  };
+
+  const stopDatasetPlayback = useCallback(() => {
+    if (playbackInterval.current) {
+      clearInterval(playbackInterval.current);
+      playbackInterval.current = null;
+    }
+    setIsPlayingDataset(false);
+    setIsPausedDataset(false);
+  }, []);
+
+  const pauseDatasetPlayback = () => {
+    if (playbackInterval.current) {
+      clearInterval(playbackInterval.current);
+      playbackInterval.current = null;
+    }
+    setIsPausedDataset(true);
+  };
+
+  const resumeDatasetPlayback = () => {
+    if (!loadedDataset) return;
+    setIsPausedDataset(false);
+    
+    let index = playbackIndex;
+    playbackInterval.current = setInterval(() => {
+      if (index < loadedDataset.length) {
+        handleData(loadedDataset[index]);
+        setPlaybackIndex(index);
+        index++;
+      } else {
+        stopDatasetPlayback();
+      }
+    }, 50);
+  };
+
+  const startDatasetPlayback = (dataset: SensorData[]) => {
+    if (isSimulating) {
+      if (simulationInterval.current) clearInterval(simulationInterval.current);
+      setIsSimulating(false);
+    }
+    stopDatasetPlayback();
+    setData([]);
+    setPlaybackIndex(0);
+    setIsPlayingDataset(true);
+    setIsPausedDataset(false);
+    setIsConnected(true);
+    setConnectionType('sim'); // Use 'sim' as a placeholder for dataset playback
+    
+    let index = 0;
+    playbackInterval.current = setInterval(() => {
+      if (index < dataset.length) {
+        handleData(dataset[index]);
+        setPlaybackIndex(index);
+        index++;
+      } else {
+        stopDatasetPlayback();
+      }
+    }, 50); // 20Hz playback
+  };
+
+  const toggleSimulation = () => {
+    if (isSimulating) {
+      if (simulationInterval.current) clearInterval(simulationInterval.current);
+      setIsSimulating(false);
+      setIsConnected(false);
+      setConnectionType(null);
+    } else {
+      setIsSimulating(true);
+      setIsConnected(true);
+      setConnectionType('sim');
+      startTimeRef.current = Date.now();
+      
+      simulationInterval.current = setInterval(() => {
+        const t = (Date.now() - startTimeRef.current) / 1000;
+        // Simulate Parkinson's tremor (approx 5Hz) + some noise + gravity
+        const tremor = Math.sin(t * 5 * Math.PI * 2) * 0.5; // 5Hz tremor
+        const noise = (Math.random() - 0.5) * 0.1;
+        
+        const fakeData: SensorData = {
+          timestamp: Date.now(),
+          ax: tremor + noise,
+          ay: noise + 0.2,
+          az: 9.8 + noise, // Gravity
+          gx: Math.cos(t * 5 * Math.PI * 2) * 20 + noise,
+          gy: noise,
+          gz: noise,
+          mx: Math.sin(t) * 50,
+          my: Math.cos(t) * 50,
+          mz: noise * 10,
+          fsr: Math.abs(Math.sin(t) * 500) + 100 // Fluctuating grip pressure
+        };
+        handleData(fakeData);
+      }, 50); // 20Hz update rate
+    }
+  };
+
+  const clearData = () => {
+    setData([]);
+  };
+
+  const exportSession = () => {
+    if (data.length === 0) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tremor-session-${new Date().toISOString()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-zinc-200 font-sans selection:bg-emerald-500/30">
+      
+      {/* Iframe Warning Banner */}
+      {isIframe && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-center">
+          <p className="text-sm text-yellow-200 flex items-center justify-center gap-2">
+            <AlertCircle size={16} />
+            <span>Hardware access is restricted in this preview.</span>
+            <a 
+              href={window.location.href} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="underline font-medium hover:text-white flex items-center gap-1"
+            >
+              Open in New Tab <ExternalLink size={12} />
+            </a>
+          </p>
+        </div>
+      )}
+
+      {/* Permission Error Modal */}
+      {permissionError && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-red-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-red-900/20">
+            <div className="flex items-center space-x-3 mb-4 text-red-400">
+              <AlertCircle size={32} />
+              <h3 className="text-xl font-semibold">Connection Blocked</h3>
+            </div>
+            <p className="text-zinc-300 mb-6 leading-relaxed">
+              The browser blocked access to USB/Bluetooth devices because this app is running inside a preview frame.
+            </p>
+            <div className="bg-zinc-950/50 rounded-lg p-4 mb-6 border border-zinc-800">
+              <p className="text-sm text-zinc-400 mb-2">To fix this:</p>
+              <ol className="list-decimal list-inside space-y-2 text-zinc-300 text-sm">
+                <li>Click the <strong className="text-white">Open in New Tab</strong> button below</li>
+                <li>Connect your device in the new window</li>
+              </ol>
+            </div>
+            <div className="flex space-x-3">
+              <button 
+                onClick={() => setPermissionError(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition-colors"
+              >
+                Dismiss
+              </button>
+              <a 
+                href={window.location.href} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex-1 flex items-center justify-center space-x-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shadow-lg shadow-emerald-900/20"
+              >
+                <span>Open in New Tab</span>
+                <ExternalLink size={16} />
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <Activity className="text-black" size={20} />
+            </div>
+            <h1 className="text-lg font-semibold tracking-tight text-white">NeuroTremor</h1>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
+              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : connectionType === 'ble' ? 'BLE CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
+            </div>
+
+            {!isConnected ? (
+              <div className="flex space-x-2">
+                <DatasetUploader 
+                  onDataLoaded={(dataset) => {
+                    setLoadedDataset(dataset);
+                    startDatasetPlayback(dataset);
+                  }}
+                  onError={(msg) => alert(msg)}
+                />
+                <button 
+                  onClick={connectSerial}
+                  className="flex items-center space-x-2 px-3 py-2 bg-white text-black rounded-lg hover:bg-zinc-200 transition-colors text-sm font-medium"
+                  title="Connect via USB Cable"
+                >
+                  <Cable size={16} />
+                  <span className="hidden sm:inline">USB</span>
+                </button>
+                <button 
+                  onClick={connectBLE}
+                  className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
+                  title="Connect via Bluetooth"
+                >
+                  <Bluetooth size={16} />
+                  <span className="hidden sm:inline">BLE</span>
+                </button>
+                <button 
+                  onClick={connectMobile}
+                  className="flex items-center space-x-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors text-sm font-medium"
+                  title="Use Mobile Sensors"
+                >
+                  <Smartphone size={16} />
+                  <span className="hidden sm:inline">Mobile</span>
+                </button>
+                <button 
+                  onClick={toggleSimulation}
+                  className="flex items-center space-x-2 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
+                  title="Run Demo Simulation"
+                >
+                  <Play size={16} />
+                  <span className="hidden sm:inline">Demo</span>
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={disconnect}
+                className="flex items-center space-x-2 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-medium"
+              >
+                <Square size={16} />
+                <span>{isPlayingDataset ? 'Stop Playback' : isSimulating ? 'Stop Demo' : 'Disconnect'}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        
+        {isPlayingDataset && loadedDataset && (
+          <div className="mb-8 bg-zinc-900 border border-emerald-500/20 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">Dataset Playback Progress</span>
+                <div className="text-xs text-zinc-500 mt-1">{playbackIndex + 1} / {loadedDataset.length} points</div>
+              </div>
+              <div className="flex space-x-2">
+                {isPausedDataset ? (
+                  <button 
+                    onClick={resumeDatasetPlayback}
+                    className="flex items-center space-x-2 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors text-xs font-medium"
+                  >
+                    <Play size={14} />
+                    <span>Resume</span>
+                  </button>
+                ) : (
+                  <button 
+                    onClick={pauseDatasetPlayback}
+                    className="flex items-center space-x-2 px-3 py-1.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-xs font-medium"
+                  >
+                    <Pause size={14} />
+                    <span>Pause</span>
+                  </button>
+                )}
+                <button 
+                  onClick={stopDatasetPlayback}
+                  className="flex items-center space-x-2 px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-xs font-medium"
+                >
+                  <Square size={14} />
+                  <span>Stop</span>
+                </button>
+              </div>
+            </div>
+            <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-300 ease-linear"
+                style={{ width: `${((playbackIndex + 1) / loadedDataset.length) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {isPausedDataset && (
+          <DatasetSummary 
+            data={data} 
+            title="Analysis of Data Analysed Until Pause"
+            onPlay={resumeDatasetPlayback}
+            onClear={() => {
+              setLoadedDataset(null);
+              stopDatasetPlayback();
+            }}
+          />
+        )}
+
+        {loadedDataset && !isPlayingDataset && (
+          <DatasetSummary 
+            data={loadedDataset} 
+            onPlay={() => startDatasetPlayback(loadedDataset)}
+            onClear={() => setLoadedDataset(null)}
+          />
+        )}
+        
+        {/* Metrics */}
+        <TremorAnalysis metrics={metrics} />
+
+        {/* Recovery Trend Section */}
+        <div className="mb-8">
+          <RecoveryTrendChart sessions={recordedSessions} />
+        </div>
+
+        {/* Charts Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="space-y-6">
+            <LiveChart 
+              title="Accelerometer (G-Force)" 
+              data={data}
+              dataKeys={[
+                { key: 'ax', color: '#ef4444', name: 'X Axis' },
+                { key: 'ay', color: '#22c55e', name: 'Y Axis' },
+                { key: 'az', color: '#3b82f6', name: 'Z Axis' },
+              ]}
+              yDomain={[-2, 2]} // Assuming normalized Gs, usually around 1G (9.8m/s^2)
+            />
+            
+            {hasGyro && (
+              <LiveChart 
+                title="Gyroscope (Deg/s)" 
+                data={data}
+                dataKeys={[
+                  { key: 'gx', color: '#f97316', name: 'X Rotation' },
+                  { key: 'gy', color: '#a855f7', name: 'Y Rotation' },
+                  { key: 'gz', color: '#06b6d4', name: 'Z Rotation' },
+                ]}
+              />
+            )}
+
+            {hasMag && (
+              <LiveChart 
+                title="Magnetometer (uT)" 
+                data={data}
+                dataKeys={[
+                  { key: 'mx', color: '#ec4899', name: 'X Mag' },
+                  { key: 'my', color: '#8b5cf6', name: 'Y Mag' },
+                  { key: 'mz', color: '#3b82f6', name: 'Z Mag' },
+                ]}
+              />
+            )}
+          </div>
+
+          <div className="space-y-6">
+             <LiveChart 
+              title="Grip Pressure (FSR)" 
+              data={data}
+              dataKeys={[
+                { key: 'fsr', color: '#eab308', name: 'Pressure' },
+              ]}
+              yDomain={[0, 1024]} // Standard 10-bit ADC range
+            />
+
+            {/* Session Log / Controls */}
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 h-64 flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-zinc-400 text-sm font-medium uppercase tracking-wider">Session Controls</h3>
+                <div className="flex gap-2">
+                  <button onClick={exportSession} className="text-zinc-500 hover:text-emerald-400 transition-colors" title="Export Session as JSON">
+                    <Save size={16} />
+                  </button>
+                  <button onClick={clearData} className="text-zinc-500 hover:text-white transition-colors" title="Clear Graphs">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex-1 flex flex-col items-center justify-center space-y-4 border-2 border-dashed border-zinc-800 rounded-lg bg-zinc-900/30">
+                {!isRecording ? (
+                  <button 
+                    onClick={() => {
+                      setIsRecording(true);
+                      recordingBuffer.current = [];
+                      recordingStartTime.current = Date.now();
+                    }}
+                    disabled={!isConnected}
+                    className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-500/20"
+                  >
+                    <div className="absolute inset-0 rounded-full border-4 border-red-500/30 scale-110 group-hover:scale-125 transition-transform" />
+                    <div className="w-6 h-6 bg-white rounded-sm" />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => {
+                      setIsRecording(false);
+                      const duration = (Date.now() - recordingStartTime.current) / 1000;
+                      const sessionFeatures = mlService.extractFeatures(recordingBuffer.current);
+                      const newSession: Session = {
+                        id: crypto.randomUUID(),
+                        timestamp: Date.now(),
+                        duration: duration,
+                        severity: metrics.intensity,
+                        stage: metrics.stage,
+                        rms: sessionFeatures.rms,
+                        frequency: sessionFeatures.frequency,
+                        data: [...recordingBuffer.current]
+                      };
+                      setRecordedSessions(prev => [newSession, ...prev]);
+                      recordingBuffer.current = [];
+                    }}
+                    className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-all shadow-lg"
+                  >
+                    <Square className="text-white fill-current" size={24} />
+                  </button>
+                )}
+                <p className="text-zinc-500 text-sm font-medium">
+                  {isRecording ? 'Recording Session...' : 'Start Recording'}
+                </p>
+              </div>
+              
+              {recordedSessions.length > 0 && (
+                <div className="mt-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-semibold text-zinc-500 uppercase">Clinical Report History</h4>
+                    <button 
+                      onClick={() => {
+                        if (confirm('Clear all saved sessions?')) {
+                          setRecordedSessions([]);
+                        }
+                      }}
+                      className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {recordedSessions.map((session) => (
+                      <div key={session.id} className="flex justify-between items-center bg-zinc-950/50 p-2.5 rounded-xl text-xs border border-zinc-800 group hover:border-zinc-700 transition-colors">
+                        <div className="flex flex-col">
+                          <span className="text-zinc-300 font-medium">{new Date(session.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span className="text-zinc-500 text-[10px]">{session.duration.toFixed(1)}s · {session.data.length} pts</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                            session.severity === 'Severe' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 
+                            session.severity === 'Moderate' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' : 
+                            'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}>
+                            {session.severity}
+                          </span>
+                          <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => generateClinicalReport(session)}
+                              className="p-1.5 text-zinc-500 hover:text-blue-400 transition-colors"
+                              title="Download Clinical Report (PDF)"
+                            >
+                              <FileText size={14} />
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setLoadedDataset(session.data);
+                                startDatasetPlayback(session.data);
+                              }}
+                              className="p-1.5 text-zinc-500 hover:text-emerald-400 transition-colors"
+                              title="Replay Session"
+                            >
+                              <Play size={14} fill="currentColor" />
+                            </button>
+                            <button 
+                              onClick={() => setRecordedSessions(prev => prev.filter(s => s.id !== session.id))}
+                              className="p-1.5 text-zinc-500 hover:text-red-400 transition-colors"
+                              title="Delete Session"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <div className="border-t border-zinc-800 pt-8 mt-8">
+          <h4 className="text-zinc-400 font-medium mb-4">Connection Guide</h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm text-zinc-500">
+            <div className="space-y-2">
+              <strong className="text-zinc-300 block">1. Prepare Device</strong>
+              <p>Flash your ESP32-C3 with the provided firmware (115200 baud).</p>
+              <div className="bg-zinc-900 p-2 rounded border border-zinc-800 mt-2">
+                <p className="text-xs text-zinc-500 mb-1 font-mono">Pinout:</p>
+                <ul className="text-xs text-zinc-400 font-mono grid grid-cols-2 gap-1 mb-2">
+                  <li>SDA: GPIO 3</li>
+                  <li>SCL: GPIO 4</li>
+                  <li>AD0: GPIO 2</li>
+                  <li>FSR: GPIO 0</li>
+                </ul>
+                <p className="text-xs text-zinc-500 mb-1 font-mono">Output:</p>
+                <code className="block text-xs font-mono text-emerald-500">
+                  X:0.12,Y:0.05,Z:9.81,F:512
+                </code>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <strong className="text-zinc-300 block">2. Connect via USB</strong>
+              <p>Plug the device into your computer. Click "Connect Device" and select the CP210x or USB Serial port.</p>
+            </div>
+            <div className="space-y-2">
+              <strong className="text-zinc-300 block">3. Monitor & Analyze</strong>
+              <p>Real-time accelerometer and force data will appear. Gyroscope will appear if available.</p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+export default App;
