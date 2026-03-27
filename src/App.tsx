@@ -33,6 +33,7 @@ function App() {
   const [permissionError, setPermissionError] = useState(false);
   const [mlSeverity, setMlSeverity] = useState<number>(0);
   const isInferenceRunning = useRef(false);
+  const lastInferenceTime = useRef<number>(0);
   const [loadedDataset, setLoadedDataset] = useState<SensorData[] | null>(null);
   const [playbackIndex, setPlaybackIndex] = useState(0);
   const [isPlayingDataset, setIsPlayingDataset] = useState(false);
@@ -96,9 +97,14 @@ function App() {
 
   // Run ML Inference periodically
   useEffect(() => {
-    if (data.length === 0 || data.length % 20 !== 0) return;
+    if (data.length < 20) return;
     
-    // Run inference every ~1 second (assuming 20Hz, 20 points is 1 second)
+    const now = Date.now();
+    // Run inference every ~1 second
+    if (now - lastInferenceTime.current < 1000) return;
+    
+    lastInferenceTime.current = now;
+    
     const runInference = async () => {
       if (isInferenceRunning.current) return;
       isInferenceRunning.current = true;
@@ -116,7 +122,7 @@ function App() {
     };
 
     runInference();
-  }, [data.length]); // Run every time data length changes, but guarded by % 20
+  }, [data]); // Run when data updates, throttled to 1 second
 
   // Metrics calculation
   const metrics = React.useMemo(() => {
@@ -161,7 +167,11 @@ function App() {
           wakeLock = await (navigator as any).wakeLock.request('screen');
           console.log('Wake Lock is active');
         } catch (err: any) {
-          console.error(`Wake Lock error: ${err.name}, ${err.message}`);
+          if (err.name === 'NotAllowedError') {
+            console.warn('Wake Lock is not allowed in this environment (e.g., iframe without permission policy).');
+          } else {
+            console.warn(`Wake Lock error: ${err.name}, ${err.message}`);
+          }
         }
       }
     };
@@ -250,13 +260,16 @@ function App() {
       setIsConnected(false);
       setConnectionType(null);
     });
+  }, [handleData]);
 
+  // Cleanup connections only on component unmount
+  useEffect(() => {
     return () => {
       serialService.disconnect();
       bleService.disconnect();
       mobileSensorService.stop();
     };
-  }, [handleData]);
+  }, []);
 
   const connectSerial = async () => {
     try {
