@@ -151,6 +151,53 @@ function App() {
 
   const [isIframe, setIsIframe] = useState(false);
 
+  // Screen Wake Lock to keep mobile monitoring continuous
+  useEffect(() => {
+    let wakeLock: any = null;
+    
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator && isConnected) {
+        try {
+          wakeLock = await (navigator as any).wakeLock.request('screen');
+          console.log('Wake Lock is active');
+        } catch (err: any) {
+          console.error(`Wake Lock error: ${err.name}, ${err.message}`);
+        }
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      if (wakeLock !== null) {
+        try {
+          await wakeLock.release();
+          wakeLock = null;
+          console.log('Wake Lock is released');
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+
+    if (isConnected) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isConnected) {
+        requestWakeLock();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [isConnected]);
+
   useEffect(() => {
     try {
       if (window.self !== window.top) {
@@ -442,22 +489,31 @@ function App() {
 
       {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Activity className="text-black" size={20} />
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                <Activity className="text-black" size={20} />
+              </div>
+              <h1 className="text-lg font-semibold tracking-tight text-white">NeuroTremor</h1>
             </div>
-            <h1 className="text-lg font-semibold tracking-tight text-white">NeuroTremor</h1>
+            
+            {/* Mobile-only status pill */}
+            <div className={`sm:hidden flex items-center space-x-2 px-2 py-1 rounded-full text-[10px] font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
+              <span>{isConnected ? (connectionType === 'mobile' ? 'MOBILE' : 'CONNECTED') : 'DISCONNECTED'}</span>
+            </div>
           </div>
 
-          <div className="flex items-center space-x-3">
-            <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto">
+            {/* Desktop status pill */}
+            <div className={`hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
               <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : connectionType === 'ble' ? 'BLE CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
             </div>
 
             {!isConnected ? (
-              <div className="flex space-x-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <DatasetUploader 
                   onDataLoaded={(dataset) => {
                     setLoadedDataset(dataset);
@@ -467,35 +523,35 @@ function App() {
                 />
                 <button 
                   onClick={connectSerial}
-                  className="flex items-center space-x-2 px-3 py-2 bg-white text-black rounded-lg hover:bg-zinc-200 transition-colors text-sm font-medium"
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-white text-black rounded-lg hover:bg-zinc-200 transition-colors text-sm font-medium"
                   title="Connect via USB Cable"
                 >
                   <Cable size={16} />
-                  <span className="hidden sm:inline">USB</span>
+                  <span className="hidden md:inline">USB</span>
                 </button>
                 <button 
                   onClick={connectBLE}
-                  className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
                   title="Connect via Bluetooth"
                 >
                   <Bluetooth size={16} />
-                  <span className="hidden sm:inline">BLE</span>
+                  <span className="hidden md:inline">BLE</span>
                 </button>
                 <button 
                   onClick={connectMobile}
-                  className="flex items-center space-x-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors text-sm font-medium"
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors text-sm font-medium"
                   title="Use Mobile Sensors"
                 >
                   <Smartphone size={16} />
-                  <span className="hidden sm:inline">Mobile</span>
+                  <span className="hidden md:inline">Mobile</span>
                 </button>
                 <button 
                   onClick={toggleSimulation}
-                  className="flex items-center space-x-2 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
                   title="Run Demo Simulation"
                 >
                   <Play size={16} />
-                  <span className="hidden sm:inline">Demo</span>
+                  <span className="hidden md:inline">Demo</span>
                 </button>
               </div>
             ) : (
