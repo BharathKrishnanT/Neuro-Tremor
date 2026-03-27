@@ -43,6 +43,8 @@ function App() {
   const [isPausedDataset, setIsPausedDataset] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [errorModal, setErrorModal] = useState<{title: string, message: string} | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
   const playbackInterval = useRef<NodeJS.Timeout | null>(null);
@@ -482,9 +484,76 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSignIn = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error("Sign in failed:", error);
+      setErrorModal({
+        title: "Sign In Failed",
+        message: `Authentication failed: ${error.message}. If you are using a browser that blocks third-party cookies or popups, please try clicking "Open in New Tab" at the top right of the preview window.`
+      });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-zinc-200 font-sans selection:bg-emerald-500/30">
       
+      {/* Error Modal */}
+      {errorModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-red-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-red-900/20">
+            <div className="flex items-center space-x-3 mb-4 text-red-400">
+              <AlertCircle size={32} />
+              <h3 className="text-xl font-semibold">{errorModal.title}</h3>
+            </div>
+            <p className="text-zinc-300 mb-6 leading-relaxed">
+              {errorModal.message}
+            </p>
+            <div className="flex space-x-3">
+              <button 
+                onClick={() => setErrorModal(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-yellow-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-yellow-900/20">
+            <div className="flex items-center space-x-3 mb-4 text-yellow-400">
+              <AlertCircle size={32} />
+              <h3 className="text-xl font-semibold">{confirmModal.title}</h3>
+            </div>
+            <p className="text-zinc-300 mb-6 leading-relaxed">
+              {confirmModal.message}
+            </p>
+            <div className="flex space-x-3">
+              <button 
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(null);
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-medium transition-colors"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Iframe Warning Banner */}
       {isIframe && (
         <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-center">
@@ -574,7 +643,7 @@ function App() {
                     setLoadedDataset(dataset);
                     startDatasetPlayback(dataset);
                   }}
-                  onError={(msg) => alert(msg)}
+                  onError={(msg) => setErrorModal({ title: "Dataset Error", message: msg })}
                 />
                 <button 
                   onClick={connectSerial}
@@ -632,7 +701,7 @@ function App() {
               </button>
             ) : (
               <button 
-                onClick={signInWithGoogle}
+                onClick={handleSignIn}
                 className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
                 title="Sign In with Google"
               >
@@ -803,7 +872,7 @@ function App() {
                       const sessionFeatures = mlService.extractFeatures(recordingBuffer.current);
                       
                       if (!user) {
-                        alert("Please sign in to save sessions.");
+                        setErrorModal({ title: "Sign In Required", message: "Please sign in to save sessions." });
                         recordingBuffer.current = [];
                         return;
                       }
@@ -826,7 +895,7 @@ function App() {
                         data: JSON.stringify(newSession.data)
                       }).catch(error => {
                         console.error("Error saving session", error);
-                        alert("Failed to save session to cloud.");
+                        setErrorModal({ title: "Save Error", message: "Failed to save session to cloud." });
                       });
                       
                       recordingBuffer.current = [];
@@ -847,15 +916,20 @@ function App() {
                     <h4 className="text-xs font-semibold text-zinc-500 uppercase">Clinical Report History</h4>
                     <button 
                       onClick={async () => {
-                        if (confirm('Clear all saved sessions?')) {
-                          try {
-                            for (const session of recordedSessions) {
-                              await deleteDoc(doc(db, 'sessions', session.id));
+                        setConfirmModal({
+                          title: "Clear All Sessions",
+                          message: "Are you sure you want to delete all saved sessions? This action cannot be undone.",
+                          onConfirm: async () => {
+                            try {
+                              for (const session of recordedSessions) {
+                                await deleteDoc(doc(db, 'sessions', session.id));
+                              }
+                            } catch (error) {
+                              console.error("Error clearing sessions", error);
+                              setErrorModal({ title: "Delete Error", message: "Failed to clear some sessions." });
                             }
-                          } catch (error) {
-                            console.error("Error clearing sessions", error);
                           }
-                        }
+                        });
                       }}
                       className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors"
                     >
