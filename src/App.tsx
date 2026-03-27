@@ -8,12 +8,15 @@ import { TremorAnalysis } from './components/TremorAnalysis';
 import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
-import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText } from 'lucide-react';
+import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { auth, db, signInWithGoogle, logOut, collection, doc, setDoc, onSnapshot, query, where, orderBy, deleteDoc } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 export interface Session {
   id: string;
+  userId: string;
   timestamp: number;
   duration: number;
   severity: string;
@@ -38,6 +41,8 @@ function App() {
   const [playbackIndex, setPlaybackIndex] = useState(0);
   const [isPlayingDataset, setIsPlayingDataset] = useState(false);
   const [isPausedDataset, setIsPausedDataset] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
   const playbackInterval = useRef<NodeJS.Timeout | null>(null);
@@ -72,28 +77,65 @@ function App() {
     };
   }, []);
 
-  // Initialize ML Model and load sessions
+  // Initialize ML Model
   useEffect(() => {
     mlService.loadModel('/model/model.json').then((success) => {
       if (success) {
         console.log("ML Model loaded successfully");
       }
     });
-
-    const saved = localStorage.getItem('neurotremor_sessions');
-    if (saved) {
-      try {
-        setRecordedSessions(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load sessions", e);
-      }
-    }
   }, []);
 
-  // Save sessions to localStorage
+  // Auth Listener
   useEffect(() => {
-    localStorage.setItem('neurotremor_sessions', JSON.stringify(recordedSessions));
-  }, [recordedSessions]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load sessions from Firestore
+  useEffect(() => {
+    if (!isAuthReady) return;
+    if (!user) {
+      setRecordedSessions([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'sessions'),
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const sessions: Session[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        try {
+          sessions.push({
+            id: data.id,
+            userId: data.userId,
+            timestamp: data.timestamp,
+            duration: data.duration,
+            severity: data.severity,
+            stage: data.stage,
+            rms: data.rms,
+            frequency: data.frequency,
+            data: JSON.parse(data.data)
+          });
+        } catch (e) {
+          console.error("Failed to parse session data", e);
+        }
+      });
+      setRecordedSessions(sessions);
+    }, (error) => {
+      console.error("Firestore Error: ", error);
+    });
+
+    return () => unsubscribe();
+  }, [user, isAuthReady]);
 
   // Run ML Inference periodically
   useEffect(() => {
@@ -576,6 +618,28 @@ function App() {
                 <span>{isPlayingDataset ? 'Stop Playback' : isSimulating ? 'Stop Demo' : 'Disconnect'}</span>
               </button>
             )}
+
+            <div className="h-6 w-px bg-zinc-800 hidden sm:block mx-1"></div>
+
+            {user ? (
+              <button 
+                onClick={logOut}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
+                title="Sign Out"
+              >
+                <img src={user.photoURL || ''} alt="User" className="w-4 h-4 rounded-full" />
+                <span className="hidden md:inline">Sign Out</span>
+              </button>
+            ) : (
+              <button 
+                onClick={signInWithGoogle}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
+                title="Sign In with Google"
+              >
+                <LogIn size={16} />
+                <span className="hidden md:inline">Sign In</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -737,8 +801,17 @@ function App() {
                       setIsRecording(false);
                       const duration = (Date.now() - recordingStartTime.current) / 1000;
                       const sessionFeatures = mlService.extractFeatures(recordingBuffer.current);
+                      
+                      if (!user) {
+                        alert("Please sign in to save sessions.");
+                        recordingBuffer.current = [];
+                        return;
+                      }
+
+                      const sessionId = crypto.randomUUID();
                       const newSession: Session = {
-                        id: crypto.randomUUID(),
+                        id: sessionId,
+                        userId: user.uid,
                         timestamp: Date.now(),
                         duration: duration,
                         severity: metrics.intensity,
@@ -747,7 +820,15 @@ function App() {
                         frequency: sessionFeatures.frequency,
                         data: [...recordingBuffer.current]
                       };
-                      setRecordedSessions(prev => [newSession, ...prev]);
+                      
+                      setDoc(doc(db, 'sessions', sessionId), {
+                        ...newSession,
+                        data: JSON.stringify(newSession.data)
+                      }).catch(error => {
+                        console.error("Error saving session", error);
+                        alert("Failed to save session to cloud.");
+                      });
+                      
                       recordingBuffer.current = [];
                     }}
                     className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-all shadow-lg"
@@ -765,9 +846,15 @@ function App() {
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-semibold text-zinc-500 uppercase">Clinical Report History</h4>
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         if (confirm('Clear all saved sessions?')) {
-                          setRecordedSessions([]);
+                          try {
+                            for (const session of recordedSessions) {
+                              await deleteDoc(doc(db, 'sessions', session.id));
+                            }
+                          } catch (error) {
+                            console.error("Error clearing sessions", error);
+                          }
                         }
                       }}
                       className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors"
@@ -809,7 +896,13 @@ function App() {
                               <Play size={14} fill="currentColor" />
                             </button>
                             <button 
-                              onClick={() => setRecordedSessions(prev => prev.filter(s => s.id !== session.id))}
+                              onClick={async () => {
+                                try {
+                                  await deleteDoc(doc(db, 'sessions', session.id));
+                                } catch (error) {
+                                  console.error("Error deleting session", error);
+                                }
+                              }}
                               className="p-1.5 text-zinc-500 hover:text-red-400 transition-colors"
                               title="Delete Session"
                             >

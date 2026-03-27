@@ -1,0 +1,89 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: sessions
+    // Document ID: {sessionId}
+    // Fields:
+    //   - id: string (required) - Unique identifier for the session.
+    //   - userId: string (required) - The ID of the user who recorded the session.
+    //   - timestamp: number (required) - The start time of the session (Unix timestamp).
+    //   - duration: number (required) - The duration of the session in milliseconds.
+    //   - severity: string (required) - The calculated severity level.
+    //   - stage: string (required) - The calculated Parkinson's stage.
+    //   - rms: number (required) - The Root Mean Square value of the tremor.
+    //   - frequency: number (required) - The dominant frequency of the tremor in Hz.
+    //   - data: string (required) - JSON stringified array of SensorData points.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user owns the resource
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Check if user is owner based on document's userId field
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    // Verify userId hasn't been tampered with on create
+    function uidUnchanged() {
+      return !('userId' in request.resource.data) ||
+        request.resource.data.userId == request.auth.uid;
+    }
+    
+    // Ensure userId field is not modified on update
+    function uidNotModified() {
+      return !('userId' in request.resource.data) ||
+        request.resource.data.userId == resource.data.userId;
+    }
+    
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    
+    function isValidSession(data) {
+      return hasOnlyAllowedFields(['id', 'userId', 'timestamp', 'duration', 'severity', 'stage', 'rms', 'frequency', 'data']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() < 100 &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() < 100 &&
+             data.timestamp is number && data.timestamp > 0 &&
+             data.duration is number && data.duration >= 0 &&
+             data.severity is string && data.severity.size() > 0 && data.severity.size() < 50 &&
+             data.stage is string && data.stage.size() > 0 && data.stage.size() < 50 &&
+             data.rms is number && data.rms >= 0 &&
+             data.frequency is number && data.frequency >= 0 &&
+             data.data is string && data.data.size() < 1048576; // Max 1MB
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isAuthenticated() && isDocOwner();
+      allow create: if isAuthenticated() && isValidSession(request.resource.data) && uidUnchanged();
+      allow update: if isAuthenticated() && isDocOwner() && isValidSession(request.resource.data) && uidNotModified();
+      allow delete: if isAuthenticated() && isDocOwner();
+    }
+  }
+}
