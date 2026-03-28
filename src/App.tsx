@@ -81,7 +81,7 @@ function App() {
 
   // Initialize ML Model
   useEffect(() => {
-    mlService.loadModel('/model/model.json').then((success) => {
+    mlService.initModel().then((success) => {
       if (success) {
         console.log("ML Model loaded successfully");
       }
@@ -154,7 +154,7 @@ function App() {
       isInferenceRunning.current = true;
       try {
         const features = mlService.extractFeatures(data);
-        const severity = await mlService.predictSeverity(features);
+        const severity = await mlService.predictSeverity(data, features);
         if (!Number.isNaN(severity)) {
           setMlSeverity(severity);
         }
@@ -896,6 +896,9 @@ function App() {
                       setDoc(doc(db, 'sessions', sessionId), {
                         ...newSession,
                         data: JSON.stringify(newSession.data)
+                      }).then(() => {
+                        // Train the CNN model on this new session data
+                        mlService.trainOnSession(newSession.data, newSession.severity);
                       }).catch(error => {
                         console.error("Error saving session", error);
                         setErrorModal({ title: "Save Error", message: "Failed to save session to cloud." });
