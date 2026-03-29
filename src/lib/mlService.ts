@@ -82,14 +82,26 @@ export class TremorMLService {
       return { rms: 0, frequency: 0, avgForce: 0, variance: 0 };
     }
 
-    const magnitudes = dataWindow.map(d => Math.sqrt(d.ax * d.ax + d.ay * d.ay + d.az * d.az));
-    const mean = magnitudes.reduce((a, b) => a + b, 0) / magnitudes.length;
-    const variance = magnitudes.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / magnitudes.length;
+    // 1. Calculate the mean vector (DC component / Gravity or static posture)
+    const meanX = dataWindow.reduce((acc, d) => acc + d.ax, 0) / dataWindow.length;
+    const meanY = dataWindow.reduce((acc, d) => acc + d.ay, 0) / dataWindow.length;
+    const meanZ = dataWindow.reduce((acc, d) => acc + d.az, 0) / dataWindow.length;
+
+    // 2. Isolate dynamic acceleration (AC component / Tremor) by subtracting the mean
+    const dynamicMagnitudes = dataWindow.map(d => 
+      Math.sqrt(Math.pow(d.ax - meanX, 2) + Math.pow(d.ay - meanY, 2) + Math.pow(d.az - meanZ, 2))
+    );
+
+    // 3. Calculate RMS of the dynamic acceleration
+    const sumSquared = dynamicMagnitudes.reduce((acc, val) => acc + (val * val), 0);
+    const variance = sumSquared / dynamicMagnitudes.length;
     const rms = Math.sqrt(variance);
 
+    // 4. Calculate Frequency using zero-crossings on the dynamic magnitude
+    const meanDynMag = dynamicMagnitudes.reduce((a, b) => a + b, 0) / dynamicMagnitudes.length;
     let zeroCrossings = 0;
-    for (let i = 1; i < magnitudes.length; i++) {
-      if ((magnitudes[i] - mean) * (magnitudes[i - 1] - mean) < 0) {
+    for (let i = 1; i < dynamicMagnitudes.length; i++) {
+      if ((dynamicMagnitudes[i] - meanDynMag) * (dynamicMagnitudes[i - 1] - meanDynMag) < 0) {
         zeroCrossings++;
       }
     }
@@ -205,11 +217,11 @@ export class TremorMLService {
     
     let severity = 0;
 
-    // Medically accurate thresholds for tremor acceleration RMS (m/s^2)
-    if (features.rms > 0.15) severity = 1; // Mild tremor
-    if (features.rms > 0.5) severity = 2;  // Moderate tremor
-    if (features.rms > 1.0) severity = 3;  // Severe tremor
-    if (features.rms > 2.0) severity = 4;  // Very severe
+    // Medically accurate thresholds for pure dynamic tremor acceleration RMS (m/s^2)
+    if (features.rms > 0.2) severity = 1; // Mild tremor
+    if (features.rms > 0.6) severity = 2; // Moderate tremor
+    if (features.rms > 1.2) severity = 3; // Severe tremor
+    if (features.rms > 2.0) severity = 4; // Very severe
 
     // Boost severity if frequency matches typical Parkinson's tremor (3-7 Hz)
     if (isParkinsonianFreq && severity > 0 && severity < 4) {

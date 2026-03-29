@@ -77,7 +77,12 @@ class MobileSensorService {
   };
 
   private handleMotion = (event: DeviceMotionEvent) => {
-    const acc = event.accelerationIncludingGravity;
+    // Prefer linear acceleration (gravity removed by OS) for accurate tremor detection
+    let acc = event.acceleration;
+    if (!acc || (acc.x === null && acc.y === null && acc.z === null)) {
+      acc = event.accelerationIncludingGravity;
+    }
+    
     const rot = event.rotationRate;
 
     const newAx = Number(acc?.x) || 0;
