@@ -81,7 +81,7 @@ export class TremorMLService {
    * Extract features from a window of sensor data.
    * This should match the preprocessing steps used in your Colab notebook.
    */
-  extractFeatures(dataWindow: SensorData[]): TremorFeatures {
+  extractFeatures(dataWindow: SensorData[], deviceType: 'mobile' | 'pen' = 'mobile'): TremorFeatures {
     if (dataWindow.length < 10) {
       return { rms: 0, frequency: 0, avgForce: 0, variance: 0, amplitude: 0 };
     }
@@ -104,19 +104,29 @@ export class TremorMLService {
     // 4. Calculate Frequency using zero-crossings on the dynamic magnitude
     const meanDynMag = dynamicMagnitudes.reduce((a, b) => a + b, 0) / dynamicMagnitudes.length;
     
-    // Apply a small hysteresis (deadband) to ignore tiny noise fluctuations around the mean
-    const hysteresis = 0.05; // 0.05 m/s^2 deadband
     let zeroCrossings = 0;
-    let isAbove = dynamicMagnitudes[0] > meanDynMag + hysteresis;
     
-    for (let i = 1; i < dynamicMagnitudes.length; i++) {
-      const mag = dynamicMagnitudes[i];
-      if (isAbove && mag < meanDynMag - hysteresis) {
-        zeroCrossings++;
-        isAbove = false;
-      } else if (!isAbove && mag > meanDynMag + hysteresis) {
-        zeroCrossings++;
-        isAbove = true;
+    if (deviceType === 'mobile') {
+      // Apply a small hysteresis (deadband) to ignore tiny noise fluctuations around the mean
+      const hysteresis = 0.05; // 0.05 m/s^2 deadband
+      let isAbove = dynamicMagnitudes[0] > meanDynMag + hysteresis;
+      
+      for (let i = 1; i < dynamicMagnitudes.length; i++) {
+        const mag = dynamicMagnitudes[i];
+        if (isAbove && mag < meanDynMag - hysteresis) {
+          zeroCrossings++;
+          isAbove = false;
+        } else if (!isAbove && mag > meanDynMag + hysteresis) {
+          zeroCrossings++;
+          isAbove = true;
+        }
+      }
+    } else {
+      // Pen: standard zero-crossing without hysteresis
+      for (let i = 1; i < dynamicMagnitudes.length; i++) {
+        if ((dynamicMagnitudes[i] - meanDynMag) * (dynamicMagnitudes[i - 1] - meanDynMag) < 0) {
+          zeroCrossings++;
+        }
       }
     }
 
@@ -142,7 +152,7 @@ export class TremorMLService {
    * Run inference using the loaded CNN model or a fallback heuristic.
    * Returns a severity score (0 to 4).
    */
-  async predictSeverity(dataWindow: SensorData[], features: TremorFeatures): Promise<number> {
+  async predictSeverity(dataWindow: SensorData[], features: TremorFeatures, deviceType: 'mobile' | 'pen' = 'mobile'): Promise<number> {
     if (this.isModelLoaded && this.isModelTrained && this.model) {
       const inputTensor = this.prepareTensor(dataWindow);
       if (inputTensor) {
@@ -163,11 +173,11 @@ export class TremorMLService {
         } catch (error) {
           console.error('Inference error, falling back to heuristic:', error);
           if (inputTensor) inputTensor.dispose();
-          return this.heuristicPrediction(features);
+          return this.heuristicPrediction(features, deviceType);
         }
       }
     }
-    return this.heuristicPrediction(features);
+    return this.heuristicPrediction(features, deviceType);
   }
 
   /**
@@ -229,24 +239,45 @@ export class TremorMLService {
    * A heuristic fallback to simulate the ML model's behavior.
    * Maps features to a 0-4 severity scale (similar to UPDRS).
    */
-  public heuristicPrediction(features: TremorFeatures): number {
+  public heuristicPrediction(features: TremorFeatures, deviceType: 'mobile' | 'pen' = 'mobile'): number {
     let severity = 0;
 
-    // Convert amplitude from m/s^2 to g (1g = 9.81 m/s^2)
-    const amplitudeG = features.amplitude / 9.81;
+    // Clinical tremor severity is determined by the amplitude (RMS acceleration), not frequency.
+    // Frequency is used to classify the *type* of tremor (e.g., Parkinson's 4-6Hz, Essential 4-12Hz),
+    // but the *severity* (disease level) is strictly based on how violent the shaking is (amplitude).
+    
+    // We use RMS (Root Mean Square) acceleration as it is the standard clinical metric 
+    // for quantifying tremor severity, being more stable than peak amplitude.
+    const rms = features.rms; // in m/s^2
 
-    // Use tremor amplitude for determining the stage
-    // Thresholds adjusted for higher g-forces to accommodate simulated shaking
-    if (amplitudeG <= 1.0) {
-      severity = 0; // Normal
-    } else if (amplitudeG <= 4.0) {
-      severity = 1; // Mild tremor
-    } else if (amplitudeG <= 8.0) {
-      severity = 2; // Moderate tremor
-    } else if (amplitudeG <= 12.0) {
-      severity = 3; // Severe tremor
+    if (deviceType === 'mobile') {
+      // Mobile phone in hand. Heavier object, dampens acceleration.
+      // Realistic clinical tremor RMS acceleration thresholds (m/s^2):
+      if (rms <= 0.2) {
+        severity = 0; // Normal (ambient noise / steady hand)
+      } else if (rms <= 0.5) {
+        severity = 1; // Mild tremor
+      } else if (rms <= 1.5) {
+        severity = 2; // Moderate tremor
+      } else if (rms <= 3.0) {
+        severity = 3; // Severe tremor
+      } else {
+        severity = 4; // Very severe tremor
+      }
     } else {
-      severity = 4; // Very severe
+      // Pen. Lighter object, held in fingers, more sensitive to fine motor tremors.
+      // Thresholds are lower because fine finger tremors generate less absolute acceleration.
+      if (rms <= 0.1) {
+        severity = 0; // Normal
+      } else if (rms <= 0.3) {
+        severity = 1; // Mild tremor
+      } else if (rms <= 0.8) {
+        severity = 2; // Moderate tremor
+      } else if (rms <= 2.0) {
+        severity = 3; // Severe tremor
+      } else {
+        severity = 4; // Very severe tremor
+      }
     }
 
     // Ensure severity is within 0-4 range

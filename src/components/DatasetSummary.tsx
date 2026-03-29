@@ -12,7 +12,7 @@ interface DatasetSummaryProps {
 }
 
 export const DatasetSummary: React.FC<DatasetSummaryProps> = ({ data, title = "Dataset Analysis Summary", onPlay, onClear }) => {
-  const features = mlService.extractFeatures(data);
+  const features = mlService.extractFeatures(data, 'pen');
   
   // Calculate severity distribution (mocked for now based on segments)
   const segmentSize = 100;
@@ -20,8 +20,8 @@ export const DatasetSummary: React.FC<DatasetSummaryProps> = ({ data, title = "D
   for (let i = 0; i < data.length; i += segmentSize) {
     const segment = data.slice(i, i + segmentSize);
     if (segment.length >= 10) {
-      const f = mlService.extractFeatures(segment);
-      const severity = mlService.heuristicPrediction(f);
+      const f = mlService.extractFeatures(segment, 'pen');
+      const severity = mlService.heuristicPrediction(f, 'pen');
       segments.push({
         index: i / segmentSize,
         severity,

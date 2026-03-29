@@ -28,7 +28,7 @@ export interface Session {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | null>(null);
+  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | 'mobile' | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [data, setData] = useState<SensorData[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -153,8 +153,9 @@ function App() {
       if (isInferenceRunning.current) return;
       isInferenceRunning.current = true;
       try {
-        const features = mlService.extractFeatures(data);
-        const severity = await mlService.predictSeverity(data, features);
+        const deviceType = connectionType === 'mobile' ? 'mobile' : 'pen';
+        const features = mlService.extractFeatures(data, deviceType);
+        const severity = await mlService.predictSeverity(data, features, deviceType);
         if (!Number.isNaN(severity)) {
           setMlSeverity(severity);
         }
@@ -166,16 +167,17 @@ function App() {
     };
 
     runInference();
-  }, [data]); // Run when data updates, throttled to 1 second
+  }, [data, connectionType]); // Run when data updates, throttled to 50ms
 
   // Metrics calculation
   const metrics = React.useMemo(() => {
     if (data.length < 10) return { rms: 0, frequency: 0, intensity: 'Normal', stage: 'Normal', recoveryRate: 0 };
 
-    const features = mlService.extractFeatures(data);
+    const deviceType = connectionType === 'mobile' ? 'mobile' : 'pen';
+    const features = mlService.extractFeatures(data, deviceType);
     
     // Calculate immediate heuristic severity for zero-latency UI updates
-    const immediateSeverity = mlService.heuristicPrediction(features);
+    const immediateSeverity = mlService.heuristicPrediction(features, deviceType);
     
     // Use the immediate severity for the stage to ensure < 5ms latency
     const stage = mlService.getStage(immediateSeverity);
@@ -202,7 +204,7 @@ function App() {
       stage, 
       recoveryRate: Number.isNaN(recoveryRate) ? 0 : recoveryRate 
     };
-  }, [data, recordedSessions]);
+  }, [data, recordedSessions, connectionType]);
 
   const [isIframe, setIsIframe] = useState(false);
 
@@ -877,7 +879,8 @@ function App() {
                     onClick={() => {
                       setIsRecording(false);
                       const duration = (Date.now() - recordingStartTime.current) / 1000;
-                      const sessionFeatures = mlService.extractFeatures(recordingBuffer.current);
+                      const deviceType = connectionType === 'mobile' ? 'mobile' : 'pen';
+                      const sessionFeatures = mlService.extractFeatures(recordingBuffer.current, deviceType);
                       
                       if (!user) {
                         setErrorModal({ title: "Sign In Required", message: "Please sign in to save sessions." });
