@@ -205,11 +205,11 @@ export class TremorMLService {
     
     let severity = 0;
 
-    // Adjusted sensitivity to a middle ground
-    if (features.rms > 0.10) severity = 1;
-    if (features.rms > 0.25) severity = 2;
-    if (features.rms > 0.65) severity = 3;
-    if (features.rms > 1.3) severity = 4;
+    // Medically accurate thresholds for tremor acceleration RMS (m/s^2)
+    if (features.rms > 0.15) severity = 1; // Mild tremor
+    if (features.rms > 0.5) severity = 2;  // Moderate tremor
+    if (features.rms > 1.0) severity = 3;  // Severe tremor
+    if (features.rms > 2.0) severity = 4;  // Very severe
 
     // Boost severity if frequency matches typical Parkinson's tremor (3-7 Hz)
     if (isParkinsonianFreq && severity > 0 && severity < 4) {

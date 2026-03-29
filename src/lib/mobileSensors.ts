@@ -8,9 +8,12 @@ class MobileSensorService {
 
   private lastMotion = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 };
   private lastOrientation = { alpha: 0, beta: 0, gamma: 0 };
+  private isFirstReading = true;
   
-  // Smoothing factor for low-pass filter (0.0 to 1.0). Lower = smoother/less sensitive.
-  private smoothingFactor = 0.12;
+  // Smoothing factor for low-pass filter (0.0 to 1.0). 1.0 = no smoothing (raw data).
+  // We use 1.0 because low-pass filtering the components before calculating magnitude 
+  // causes artificial dips in magnitude during rotation, which looks like tremor variance.
+  private smoothingFactor = 1.0;
 
   async requestPermission(): Promise<boolean> {
     // iOS 13+ requires explicit permission for DeviceMotion
@@ -35,6 +38,7 @@ class MobileSensorService {
       throw new Error("Permission to access motion sensors was denied.");
     }
 
+    this.isFirstReading = true;
     window.addEventListener('devicemotion', this.handleMotion);
     window.addEventListener('deviceorientation', this.handleOrientation);
     this.isListening = true;
@@ -61,11 +65,15 @@ class MobileSensorService {
     const newBeta = event.beta || 0;
     const newGamma = event.gamma || 0;
 
-    this.lastOrientation = {
-      alpha: this.lastOrientation.alpha + this.smoothingFactor * (newAlpha - this.lastOrientation.alpha),
-      beta: this.lastOrientation.beta + this.smoothingFactor * (newBeta - this.lastOrientation.beta),
-      gamma: this.lastOrientation.gamma + this.smoothingFactor * (newGamma - this.lastOrientation.gamma)
-    };
+    if (this.isFirstReading) {
+      this.lastOrientation = { alpha: newAlpha, beta: newBeta, gamma: newGamma };
+    } else {
+      this.lastOrientation = {
+        alpha: this.lastOrientation.alpha + this.smoothingFactor * (newAlpha - this.lastOrientation.alpha),
+        beta: this.lastOrientation.beta + this.smoothingFactor * (newBeta - this.lastOrientation.beta),
+        gamma: this.lastOrientation.gamma + this.smoothingFactor * (newGamma - this.lastOrientation.gamma)
+      };
+    }
   };
 
   private handleMotion = (event: DeviceMotionEvent) => {
@@ -79,15 +87,19 @@ class MobileSensorService {
     const newGy = Number(rot?.beta) || 0;
     const newGz = Number(rot?.gamma) || 0;
 
-    // Apply low-pass filter to smooth out jitter and reduce extreme sensitivity
-    this.lastMotion = {
-      ax: this.lastMotion.ax + this.smoothingFactor * (newAx - this.lastMotion.ax),
-      ay: this.lastMotion.ay + this.smoothingFactor * (newAy - this.lastMotion.ay),
-      az: this.lastMotion.az + this.smoothingFactor * (newAz - this.lastMotion.az),
-      gx: this.lastMotion.gx + this.smoothingFactor * (newGx - this.lastMotion.gx),
-      gy: this.lastMotion.gy + this.smoothingFactor * (newGy - this.lastMotion.gy),
-      gz: this.lastMotion.gz + this.smoothingFactor * (newGz - this.lastMotion.gz)
-    };
+    if (this.isFirstReading) {
+      this.lastMotion = { ax: newAx, ay: newAy, az: newAz, gx: newGx, gy: newGy, gz: newGz };
+      this.isFirstReading = false;
+    } else {
+      this.lastMotion = {
+        ax: this.lastMotion.ax + this.smoothingFactor * (newAx - this.lastMotion.ax),
+        ay: this.lastMotion.ay + this.smoothingFactor * (newAy - this.lastMotion.ay),
+        az: this.lastMotion.az + this.smoothingFactor * (newAz - this.lastMotion.az),
+        gx: this.lastMotion.gx + this.smoothingFactor * (newGx - this.lastMotion.gx),
+        gy: this.lastMotion.gy + this.smoothingFactor * (newGy - this.lastMotion.gy),
+        gz: this.lastMotion.gz + this.smoothingFactor * (newGz - this.lastMotion.gz)
+      };
+    }
   };
 
   private emitData = () => {
