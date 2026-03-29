@@ -218,11 +218,11 @@ export class TremorMLService {
     let severity = 0;
 
     // Medically accurate thresholds for pure dynamic tremor acceleration RMS (m/s^2)
-    // Normal hand jitter is typically 0.1 - 0.4 m/s^2.
-    if (features.rms > 0.5) severity = 1; // Mild tremor
-    if (features.rms > 1.0) severity = 2; // Moderate tremor
-    if (features.rms > 2.0) severity = 3; // Severe tremor
-    if (features.rms > 4.0) severity = 4; // Very severe
+    // Normal hand jitter is typically 0.0 - 2.0 m/s^2.
+    if (features.rms > 2.0) severity = 1; // Mild tremor
+    if (features.rms > 3.0) severity = 2; // Moderate tremor
+    if (features.rms > 4.0) severity = 3; // Severe tremor
+    if (features.rms > 5.0) severity = 4; // Very severe
 
     // Boost severity if frequency matches typical Parkinson's tremor (3-7 Hz)
     if (isParkinsonianFreq && severity > 0 && severity < 4) {
