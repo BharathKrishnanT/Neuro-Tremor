@@ -228,11 +228,11 @@ export class TremorMLService {
     // Thresholds adjusted for higher g-forces to accommodate simulated shaking
     if (amplitudeG <= 1.0) {
       severity = 0; // Normal
-    } else if (amplitudeG <= 3.0) {
+    } else if (amplitudeG <= 4.0) {
       severity = 1; // Mild tremor
-    } else if (amplitudeG <= 5.0) {
+    } else if (amplitudeG <= 8.0) {
       severity = 2; // Moderate tremor
-    } else if (amplitudeG <= 7.0) {
+    } else if (amplitudeG <= 12.0) {
       severity = 3; // Severe tremor
     } else {
       severity = 4; // Very severe
