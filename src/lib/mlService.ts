@@ -14,6 +14,7 @@ const CHANNELS = 6; // ax, ay, az, gx, gy, gz
 export class TremorMLService {
   private model: tf.LayersModel | null = null;
   private isModelLoaded = false;
+  private isModelTrained = false;
   private isTraining = false;
 
   /**
@@ -22,8 +23,9 @@ export class TremorMLService {
    */
   async initModel() {
     try {
-      this.model = await tf.loadLayersModel('indexeddb://tremor-cnn-model');
+      this.model = await tf.loadLayersModel('indexeddb://tremor-cnn-model-v2');
       this.isModelLoaded = true;
+      this.isModelTrained = true;
       console.log('Loaded existing CNN model from IndexedDB');
       
       this.model.compile({
@@ -36,6 +38,7 @@ export class TremorMLService {
       console.log('Creating new CNN model for continuous learning');
       this.model = this.buildCNN();
       this.isModelLoaded = true;
+      this.isModelTrained = false;
       return true;
     }
   }
@@ -126,7 +129,7 @@ export class TremorMLService {
    * Returns a severity score (0 to 4).
    */
   async predictSeverity(dataWindow: SensorData[], features: TremorFeatures): Promise<number> {
-    if (this.isModelLoaded && this.model) {
+    if (this.isModelLoaded && this.isModelTrained && this.model) {
       const inputTensor = this.prepareTensor(dataWindow);
       if (inputTensor) {
         try {
@@ -198,7 +201,8 @@ export class TremorMLService {
       xs.dispose();
       ys.dispose();
 
-      await this.model.save('indexeddb://tremor-cnn-model');
+      await this.model.save('indexeddb://tremor-cnn-model-v2');
+      this.isModelTrained = true;
       console.log('Model trained and saved successfully!');
     } catch (error) {
       console.error('Error training model:', error);
