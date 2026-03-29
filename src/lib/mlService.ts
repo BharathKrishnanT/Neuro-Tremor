@@ -6,6 +6,7 @@ export interface TremorFeatures {
   frequency: number;
   avgForce: number;
   variance: number;
+  amplitude: number;
 }
 
 const WINDOW_SIZE = 40; // 2 seconds at 20Hz
@@ -82,7 +83,7 @@ export class TremorMLService {
    */
   extractFeatures(dataWindow: SensorData[]): TremorFeatures {
     if (dataWindow.length < 10) {
-      return { rms: 0, frequency: 0, avgForce: 0, variance: 0 };
+      return { rms: 0, frequency: 0, avgForce: 0, variance: 0, amplitude: 0 };
     }
 
     // 1. Calculate the mean vector (DC component / Gravity or static posture)
@@ -113,8 +114,10 @@ export class TremorMLService {
     const frequency = durationSec > 0 ? (zeroCrossings / 2) / durationSec : 0;
 
     const avgForce = dataWindow.reduce((acc, d) => acc + d.fsr, 0) / dataWindow.length;
+    
+    const amplitude = Math.max(...dynamicMagnitudes);
 
-    return { rms, frequency, avgForce, variance };
+    return { rms, frequency, avgForce, variance, amplitude };
   }
 
   private prepareTensor(dataWindow: SensorData[]): tf.Tensor3D | null {
@@ -216,26 +219,23 @@ export class TremorMLService {
    * Maps features to a 0-4 severity scale (similar to UPDRS).
    */
   public heuristicPrediction(features: TremorFeatures): number {
-    // Parkinson's resting tremor is typically 4-6 Hz
-    const isParkinsonianFreq = features.frequency >= 3.5 && features.frequency <= 7.0;
-    
     let severity = 0;
 
-    // Medically accurate thresholds for pure dynamic tremor acceleration RMS (m/s^2)
-    // Normal hand jitter is typically 0.0 - 2.0 m/s^2.
-    if (features.rms > 2.0) severity = 1; // Mild tremor
-    if (features.rms > 3.0) severity = 2; // Moderate tremor
-    if (features.rms > 4.0) severity = 3; // Severe tremor
-    if (features.rms > 5.0) severity = 4; // Very severe
+    // Convert amplitude from m/s^2 to g (1g = 9.81 m/s^2)
+    const amplitudeG = features.amplitude / 9.81;
 
-    // Boost severity if frequency matches typical Parkinson's tremor (3-7 Hz)
-    if (isParkinsonianFreq && severity > 0 && severity < 4) {
-      severity += 1; 
-    }
-
-    // Reduce severity if grip force is high (distinguishes action tremor from resting tremor)
-    if (features.avgForce > 2000 && severity > 1) {
-      severity -= 1;
+    // Use tremor amplitude for determining the stage
+    // Thresholds adjusted for higher g-forces to accommodate simulated shaking
+    if (amplitudeG <= 1.0) {
+      severity = 0; // Normal
+    } else if (amplitudeG <= 3.0) {
+      severity = 1; // Mild tremor
+    } else if (amplitudeG <= 5.0) {
+      severity = 2; // Moderate tremor
+    } else if (amplitudeG <= 7.0) {
+      severity = 3; // Severe tremor
+    } else {
+      severity = 4; // Very severe
     }
 
     // Ensure severity is within 0-4 range
@@ -248,8 +248,9 @@ export class TremorMLService {
   public getStage(severity: number): string {
     if (severity === 0) return 'Normal';
     if (severity <= 1.5) return 'Stage 1';
-    if (severity <= 3) return 'Stage 2';
-    return 'Stage 3';
+    if (severity <= 2.5) return 'Stage 2';
+    if (severity <= 3.5) return 'Stage 3';
+    return 'Stage 4';
   }
 }
 
