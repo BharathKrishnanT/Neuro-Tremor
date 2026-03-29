@@ -205,11 +205,11 @@ export class TremorMLService {
     
     let severity = 0;
 
-    // Adjusted sensitivity to prevent normal phone noise from triggering Stage 1
-    if (features.rms > 0.15) severity = 1;
-    if (features.rms > 0.4) severity = 2;
-    if (features.rms > 0.8) severity = 3;
-    if (features.rms > 1.5) severity = 4;
+    // Adjusted sensitivity to a middle ground
+    if (features.rms > 0.10) severity = 1;
+    if (features.rms > 0.25) severity = 2;
+    if (features.rms > 0.65) severity = 3;
+    if (features.rms > 1.3) severity = 4;
 
     // Boost severity if frequency matches typical Parkinson's tremor (3-7 Hz)
     if (isParkinsonianFreq && severity > 0 && severity < 4) {

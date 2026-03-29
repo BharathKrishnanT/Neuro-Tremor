@@ -10,7 +10,7 @@ class MobileSensorService {
   private lastOrientation = { alpha: 0, beta: 0, gamma: 0 };
   
   // Smoothing factor for low-pass filter (0.0 to 1.0). Lower = smoother/less sensitive.
-  private smoothingFactor = 0.08;
+  private smoothingFactor = 0.12;
 
   async requestPermission(): Promise<boolean> {
     // iOS 13+ requires explicit permission for DeviceMotion
