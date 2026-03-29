@@ -43,10 +43,10 @@ class MobileSensorService {
     window.addEventListener('deviceorientation', this.handleOrientation);
     this.isListening = true;
 
-    // Start a continuous polling loop at 20Hz (50ms) to match ESP pen behavior
+    // Start a continuous polling loop at 200Hz (5ms) to reduce latency
     this.pollingInterval = setInterval(() => {
       this.emitData();
-    }, 50);
+    }, 5);
   }
 
   stop() {

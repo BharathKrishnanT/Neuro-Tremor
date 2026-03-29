@@ -144,8 +144,8 @@ function App() {
     if (data.length < 20) return;
     
     const now = Date.now();
-    // Run inference every ~1 second
-    if (now - lastInferenceTime.current < 1000) return;
+    // Run inference frequently (every 50ms) to reduce latency
+    if (now - lastInferenceTime.current < 50) return;
     
     lastInferenceTime.current = now;
     
@@ -173,12 +173,17 @@ function App() {
     if (data.length < 10) return { rms: 0, frequency: 0, intensity: 'Normal', stage: 'Normal', recoveryRate: 0 };
 
     const features = mlService.extractFeatures(data);
-    const stage = mlService.getStage(mlSeverity);
+    
+    // Calculate immediate heuristic severity for zero-latency UI updates
+    const immediateSeverity = mlService.heuristicPrediction(features);
+    
+    // Use the immediate severity for the stage to ensure < 5ms latency
+    const stage = mlService.getStage(immediateSeverity);
     
     let intensity = 'Normal';
-    if (mlSeverity >= 3) intensity = 'Severe';
-    else if (mlSeverity >= 2) intensity = 'Moderate';
-    else if (mlSeverity >= 1) intensity = 'Mild';
+    if (immediateSeverity >= 3) intensity = 'Severe';
+    else if (immediateSeverity >= 2) intensity = 'Moderate';
+    else if (immediateSeverity >= 1) intensity = 'Mild';
 
     // Calculate recovery rate compared to the very first session
     let recoveryRate = 0;
@@ -197,7 +202,7 @@ function App() {
       stage, 
       recoveryRate: Number.isNaN(recoveryRate) ? 0 : recoveryRate 
     };
-  }, [data, mlSeverity, recordedSessions]);
+  }, [data, recordedSessions]);
 
   const [isIframe, setIsIframe] = useState(false);
 
@@ -405,7 +410,7 @@ function App() {
       } else {
         stopDatasetPlayback();
       }
-    }, 50);
+    }, 5);
   };
 
   const startDatasetPlayback = (dataset: SensorData[]) => {
@@ -430,7 +435,7 @@ function App() {
       } else {
         stopDatasetPlayback();
       }
-    }, 50); // 20Hz playback
+    }, 5); // 200Hz playback
   };
 
   const toggleSimulation = () => {
@@ -465,7 +470,7 @@ function App() {
           fsr: Math.abs(Math.sin(t) * 500) + 100 // Fluctuating grip pressure
         };
         handleData(fakeData);
-      }, 50); // 20Hz update rate
+      }, 5); // 200Hz update rate
     }
   };
 

@@ -103,14 +103,25 @@ export class TremorMLService {
 
     // 4. Calculate Frequency using zero-crossings on the dynamic magnitude
     const meanDynMag = dynamicMagnitudes.reduce((a, b) => a + b, 0) / dynamicMagnitudes.length;
+    
+    // Apply a small hysteresis (deadband) to ignore tiny noise fluctuations around the mean
+    const hysteresis = 0.05; // 0.05 m/s^2 deadband
     let zeroCrossings = 0;
+    let isAbove = dynamicMagnitudes[0] > meanDynMag + hysteresis;
+    
     for (let i = 1; i < dynamicMagnitudes.length; i++) {
-      if ((dynamicMagnitudes[i] - meanDynMag) * (dynamicMagnitudes[i - 1] - meanDynMag) < 0) {
+      const mag = dynamicMagnitudes[i];
+      if (isAbove && mag < meanDynMag - hysteresis) {
         zeroCrossings++;
+        isAbove = false;
+      } else if (!isAbove && mag > meanDynMag + hysteresis) {
+        zeroCrossings++;
+        isAbove = true;
       }
     }
 
     const durationSec = (dataWindow[dataWindow.length - 1].timestamp - dataWindow[0].timestamp) / 1000;
+    // Frequency is (zero crossings / 2) divided by duration in seconds
     const frequency = durationSec > 0 ? (zeroCrossings / 2) / durationSec : 0;
 
     const avgForce = dataWindow.reduce((acc, d) => acc + d.fsr, 0) / dataWindow.length;
