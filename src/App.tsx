@@ -8,6 +8,7 @@ import { TremorAnalysis } from './components/TremorAnalysis';
 import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
+import { TouchPadCanvas } from './components/TouchPadCanvas';
 import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -28,7 +29,7 @@ export interface Session {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | 'mobile' | null>(null);
+  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | 'mobile' | 'touch' | 'ble-touch' | 'serial-touch' | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [data, setData] = useState<SensorData[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -45,6 +46,8 @@ function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [errorModal, setErrorModal] = useState<{title: string, message: string} | null>(null);
   const [confirmModal, setConfirmModal] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
+  const [showPenModal, setShowPenModal] = useState(false);
+  const latestTouchRef = useRef<{x: number, y: number} | null>(null);
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
   const playbackInterval = useRef<NodeJS.Timeout | null>(null);
@@ -273,19 +276,30 @@ function App() {
   const [hasMag, setHasMag] = useState(false);
 
   const handleData = useCallback((newData: SensorData) => {
-    uiBuffer.current.push(newData);
+    let finalData = newData;
     
-    if (isRecording) {
-      recordingBuffer.current.push(newData);
+    // In combined mode, inject the latest touch coordinates from the canvas
+    if ((connectionType === 'ble-touch' || connectionType === 'serial-touch') && latestTouchRef.current) {
+      finalData = {
+        ...newData,
+        touchX: latestTouchRef.current.x,
+        touchY: latestTouchRef.current.y
+      };
     }
 
-    if (!hasGyro && (Math.abs(newData.gx) > 0.01 || Math.abs(newData.gy) > 0.01 || Math.abs(newData.gz) > 0.01)) {
+    uiBuffer.current.push(finalData);
+    
+    if (isRecording) {
+      recordingBuffer.current.push(finalData);
+    }
+
+    if (!hasGyro && (Math.abs(finalData.gx) > 0.01 || Math.abs(finalData.gy) > 0.01 || Math.abs(finalData.gz) > 0.01)) {
       setHasGyro(true);
     }
-    if (!hasMag && (Math.abs(newData.mx) > 0.01 || Math.abs(newData.my) > 0.01 || Math.abs(newData.mz) > 0.01)) {
+    if (!hasMag && (Math.abs(finalData.mx) > 0.01 || Math.abs(finalData.my) > 0.01 || Math.abs(finalData.mz) > 0.01)) {
       setHasMag(true);
     }
-  }, [hasGyro, hasMag, isRecording]);
+  }, [hasGyro, hasMag, isRecording, connectionType]);
 
   useEffect(() => {
     // Serial Listeners
@@ -322,12 +336,12 @@ function App() {
     };
   }, []);
 
-  const connectSerial = async () => {
+  const connectSerial = async (combined: boolean = false) => {
     try {
       setPermissionError(false);
       await serialService.connect();
       setIsConnected(true);
-      setConnectionType('serial');
+      setConnectionType(combined ? 'serial-touch' : 'serial');
       setIsSimulating(false);
     } catch (err: any) {
       console.error(err);
@@ -339,12 +353,12 @@ function App() {
     }
   };
 
-  const connectBLE = async () => {
+  const connectBLE = async (combined: boolean = false) => {
     try {
       setPermissionError(false);
       await bleService.connect();
       setIsConnected(true);
-      setConnectionType('ble');
+      setConnectionType(combined ? 'ble-touch' : 'ble');
       setIsSimulating(false);
     } catch (err: any) {
       console.error(err);
@@ -564,6 +578,117 @@ function App() {
         </div>
       )}
 
+      {/* Pen/Touch Input Selection Modal */}
+      {showPenModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-900 border border-purple-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl shadow-purple-900/20">
+            <div className="flex items-center space-x-3 mb-4 text-purple-400">
+              <FileText size={32} />
+              <h3 className="text-xl font-semibold">Connect Pen or Touch Pad</h3>
+            </div>
+            <p className="text-zinc-300 mb-6 leading-relaxed">
+              Choose your preferred input method to analyze tremors.
+            </p>
+            <div className="flex flex-col space-y-3">
+              <button 
+                onClick={() => {
+                  setShowPenModal(false);
+                  setIsConnected(true);
+                  setConnectionType('touch');
+                  setIsSimulating(false);
+                  setData([]);
+                  setConfirmModal({
+                    title: "Touch Pad / Pen Mode",
+                    message: "Draw spirals or lines in the white area below to analyze tremors using your connected touch pad, mouse, or digital pen.",
+                    onConfirm: () => {}
+                  });
+                }}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium transition-colors border border-zinc-700"
+              >
+                <div className="bg-zinc-700 p-2 rounded-lg">
+                  <FileText size={20} className="text-zinc-300" />
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-semibold">Use Device Touch Pad</div>
+                  <div className="text-xs text-zinc-400 font-normal">Draw directly with mouse or OS pen</div>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setShowPenModal(false);
+                  connectBLE();
+                }}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium transition-colors border border-zinc-700"
+              >
+                <div className="bg-blue-600/20 p-2 rounded-lg">
+                  <Bluetooth size={20} className="text-blue-400" />
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-semibold">Connect Custom ESP32 Pen</div>
+                  <div className="text-xs text-zinc-400 font-normal">Connect custom hardware via Web Bluetooth</div>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setShowPenModal(false);
+                  connectBLE(true);
+                  setConfirmModal({
+                    title: "Combined Mode Enabled (Bluetooth)",
+                    message: "You are now using the ESP32 Pen with the Touch Pad via Bluetooth. Draw on the canvas using your paired custom pen to combine high-fidelity device sensors with precise spatial tracking.",
+                    onConfirm: () => {}
+                  });
+                }}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-white font-medium transition-colors border border-purple-500/50"
+              >
+                <div className="bg-purple-600/40 p-2 rounded-lg">
+                  <div className="flex items-center space-x-1">
+                    <Bluetooth size={16} className="text-purple-300" />
+                    <FileText size={16} className="text-purple-300" />
+                  </div>
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-semibold text-purple-200">Combined Mode (Bluetooth)</div>
+                  <div className="text-xs text-purple-300/80 font-normal">Use BLE ESP32 Pen + Touch Pad Canvas</div>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setShowPenModal(false);
+                  connectSerial(true);
+                  setConfirmModal({
+                    title: "Combined Mode Enabled (USB)",
+                    message: "You are now using the ESP32 Pen with the Touch Pad via USB. Draw on the canvas using your paired custom pen to combine high-fidelity device sensors with precise spatial tracking.",
+                    onConfirm: () => {}
+                  });
+                }}
+                className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-white font-medium transition-colors border border-purple-500/50"
+              >
+                <div className="bg-purple-600/40 p-2 rounded-lg">
+                  <div className="flex items-center space-x-1">
+                    <Cable size={16} className="text-purple-300" />
+                    <FileText size={16} className="text-purple-300" />
+                  </div>
+                </div>
+                <div className="text-left flex-1">
+                  <div className="font-semibold text-purple-200">Combined Mode (USB)</div>
+                  <div className="text-xs text-purple-300/80 font-normal">Use USB ESP32 Pen + Touch Pad Canvas</div>
+                </div>
+              </button>
+              
+              <button 
+                onClick={() => setShowPenModal(false)}
+                className="w-full mt-2 px-4 py-2.5 rounded-xl bg-transparent hover:bg-zinc-800 text-zinc-400 font-medium transition-colors border border-transparent"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Iframe Warning Banner */}
       {isIframe && (
         <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-center">
@@ -643,7 +768,7 @@ function App() {
             {/* Desktop status pill */}
             <div className={`hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
-              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : connectionType === 'ble' ? 'BLE CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
+              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : (connectionType === 'ble-touch' || connectionType === 'serial-touch') ? 'COMBINED MODE' : connectionType === 'touch' ? 'TOUCH PAD / PEN' : connectionType === 'ble' ? 'CUSTOM BLE DEV' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
             </div>
 
             {!isConnected ? (
@@ -664,20 +789,20 @@ function App() {
                   <span className="hidden md:inline">USB</span>
                 </button>
                 <button 
-                  onClick={connectBLE}
-                  className="flex items-center space-x-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
-                  title="Connect via Bluetooth"
-                >
-                  <Bluetooth size={16} />
-                  <span className="hidden md:inline">BLE</span>
-                </button>
-                <button 
                   onClick={connectMobile}
                   className="flex items-center space-x-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors text-sm font-medium"
                   title="Use Mobile Sensors"
                 >
                   <Smartphone size={16} />
                   <span className="hidden md:inline">Mobile</span>
+                </button>
+                <button 
+                  onClick={() => setShowPenModal(true)}
+                  className="flex items-center space-x-1.5 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors text-sm font-medium"
+                  title="Connect Pen or Touch Pad"
+                >
+                  <FileText size={16} />
+                  <span className="hidden md:inline">Pen/Touch</span>
                 </button>
                 <button 
                   onClick={toggleSimulation}
@@ -796,6 +921,16 @@ function App() {
         <div className="mb-8">
           <RecoveryTrendChart sessions={recordedSessions} />
         </div>
+
+        {isConnected && (connectionType === 'touch' || connectionType === 'ble-touch' || connectionType === 'serial-touch') && (
+          <TouchPadCanvas 
+            onData={handleData} 
+            mode={connectionType === 'touch' ? 'touch' : 'combined'}
+            onTouchUpdate={(x, y, pressure) => {
+              latestTouchRef.current = { x, y };
+            }}
+          />
+        )}
 
         {/* Charts Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

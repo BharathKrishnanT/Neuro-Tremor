@@ -17,7 +17,7 @@ class BLEService {
 
     try {
       this.device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "NeuroTremor_Node_C3" }],
+        acceptAllDevices: true,
         optionalServices: [BLE_SERVICE_UUID]
       });
 

@@ -10,6 +10,8 @@ export interface SensorData {
   my: number;
   mz: number;
   fsr: number;
+  touchX?: number;
+  touchY?: number;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
