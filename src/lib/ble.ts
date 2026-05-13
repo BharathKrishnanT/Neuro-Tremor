@@ -75,9 +75,9 @@ class BLEService {
          if ('X' in data && 'Y' in data && 'Z' in data) {
            const sensorData: SensorData = {
              timestamp: Date.now(),
-             ax: Number(data.X) || 0,
-             ay: Number(data.Y) || 0,
-             az: Number(data.Z) || 0,
+             ax: (Number(data.X) || 0) * 0.00981,
+             ay: (Number(data.Y) || 0) * 0.00981,
+             az: (Number(data.Z) || 0) * 0.00981,
              gx: Number(data.GX) || 0,
              gy: Number(data.GY) || 0,
              gz: Number(data.GZ) || 0,

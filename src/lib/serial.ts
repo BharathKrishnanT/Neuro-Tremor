@@ -135,15 +135,15 @@ class SerialService {
            if ('X' in data && 'Y' in data && 'Z' in data) {
              sensorData = {
                timestamp: Date.now(),
-               ax: Number(data.X) || 0,
-               ay: Number(data.Y) || 0,
-               az: Number(data.Z) || 0,
-               gx: 0, 
-               gy: 0,
-               gz: 0,
-               mx: 0,
-               my: 0,
-               mz: 0,
+               ax: (Number(data.X) || 0) * 0.00981,
+               ay: (Number(data.Y) || 0) * 0.00981,
+               az: (Number(data.Z) || 0) * 0.00981,
+               gx: Number(data.GX) || 0, 
+               gy: Number(data.GY) || 0,
+               gz: Number(data.GZ) || 0,
+               mx: Number(data.MX) || 0,
+               my: Number(data.MY) || 0,
+               mz: Number(data.MZ) || 0,
                fsr: Number(data.F) || 0
              };
            }
@@ -155,9 +155,9 @@ class SerialService {
           if (parts.length >= 10) {
              sensorData = {
               timestamp: Date.now(),
-              ax: Number(parts[0]) || 0,
-              ay: Number(parts[1]) || 0,
-              az: Number(parts[2]) || 0,
+              ax: (Number(parts[0]) || 0) * 0.00981,
+              ay: (Number(parts[1]) || 0) * 0.00981,
+              az: (Number(parts[2]) || 0) * 0.00981,
               gx: Number(parts[3]) || 0,
               gy: Number(parts[4]) || 0,
               gz: Number(parts[5]) || 0,
@@ -170,9 +170,9 @@ class SerialService {
             // Legacy 7-value support
             sensorData = {
               timestamp: Date.now(),
-              ax: Number(parts[0]) || 0,
-              ay: Number(parts[1]) || 0,
-              az: Number(parts[2]) || 0,
+              ax: (Number(parts[0]) || 0) * 0.00981,
+              ay: (Number(parts[1]) || 0) * 0.00981,
+              az: (Number(parts[2]) || 0) * 0.00981,
               gx: Number(parts[3]) || 0,
               gy: Number(parts[4]) || 0,
               gz: Number(parts[5]) || 0,

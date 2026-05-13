@@ -253,27 +253,26 @@ export class TremorMLService {
     if (deviceType === 'mobile') {
       // Mobile phone in hand. Heavier object, dampens acceleration.
       // Realistic clinical tremor RMS acceleration thresholds (m/s^2):
-      if (rms <= 0.2) {
+      if (rms <= 2.0) {
         severity = 0; // Normal (ambient noise / steady hand)
-      } else if (rms <= 0.5) {
+      } else if (rms <= 4.5) {
         severity = 1; // Mild tremor
-      } else if (rms <= 1.5) {
+      } else if (rms <= 8.0) {
         severity = 2; // Moderate tremor
-      } else if (rms <= 3.0) {
+      } else if (rms <= 14.0) {
         severity = 3; // Severe tremor
       } else {
         severity = 4; // Very severe tremor
       }
     } else {
       // Pen. Lighter object, held in fingers, more sensitive to fine motor tremors.
-      // Thresholds are lower because fine finger tremors generate less absolute acceleration.
-      if (rms <= 0.1) {
+      if (rms <= 1.0) {
         severity = 0; // Normal
-      } else if (rms <= 0.3) {
+      } else if (rms <= 2.5) {
         severity = 1; // Mild tremor
-      } else if (rms <= 0.8) {
+      } else if (rms <= 5.0) {
         severity = 2; // Moderate tremor
-      } else if (rms <= 2.0) {
+      } else if (rms <= 10.0) {
         severity = 3; // Severe tremor
       } else {
         severity = 4; // Very severe tremor

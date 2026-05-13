@@ -6,7 +6,7 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
   const [isDrawing, setIsDrawing] = useState(false);
   
   const lastPos = useRef<{x: number, y: number, t: number} | null>(null);
-  const lastVel = useRef<{vx: number, vy: number} | null>(null);
+  const lastVel = useRef<{vx: number, vy: number, ax: number, ay: number} | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,15 +41,15 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
+      x: e.nativeEvent.offsetX * scaleX,
+      y: e.nativeEvent.offsetY * scaleY
     };
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     setIsDrawing(true);
     lastPos.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-    lastVel.current = { vx: 0, vy: 0 };
+    lastVel.current = { vx: 0, vy: 0, ax: 0, ay: 0 };
     
     // Setup drawing
     const ctx = canvasRef.current?.getContext('2d');
@@ -76,12 +76,20 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
     const vx = (dx * pxToMeter) / dt;
     const vy = (dy * pxToMeter) / dt;
     
-    const ax = (vx - lastVel.current.vx) / dt;
-    const ay = (vy - lastVel.current.vy) / dt;
+    // Calculate raw acceleration
+    const rawAx = (vx - lastVel.current.vx) / dt;
+    const rawAy = (vy - lastVel.current.vy) / dt;
+    
+    // Apply low-pass filter to smooth out pixel-jitter noise
+    const smoothing = 0.2; 
+    const ax = lastVel.current.vx === 0 ? rawAx : (lastVel.current.ax || 0) * (1 - smoothing) + rawAx * smoothing;
+    const ay = lastVel.current.vy === 0 ? rawAy : (lastVel.current.ay || 0) * (1 - smoothing) + rawAy * smoothing;
 
     // Send the simulated sensor data
-    const pressure = e.pressure !== undefined ? e.pressure * 1024 : 512;
+    const pressure = e.pressure !== undefined ? e.pressure * 4095 : 2048;
     
+    const { x, y } = getCanvasCoordinates(e);
+
     if (mode === 'touch') {
       onData({
         timestamp: now,
@@ -95,17 +103,16 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
         my: 0,
         mz: 0,
         fsr: pressure,
-        touchX: e.clientX,
-        touchY: e.clientY
+        touchX: x,
+        touchY: y
       });
     } else if (onTouchUpdate) {
-      onTouchUpdate(e.clientX, e.clientY, pressure);
+      onTouchUpdate(x, y, pressure);
     }
 
     // Update drawing
     const ctx = canvasRef.current?.getContext('2d');
     if (ctx) {
-      const { x, y } = getCanvasCoordinates(e);
       ctx.lineTo(x, y);
       ctx.strokeStyle = '#10b981';
       ctx.lineWidth = 2;
@@ -113,7 +120,7 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
     }
 
     lastPos.current = { x: e.clientX, y: e.clientY, t: now };
-    lastVel.current = { vx, vy };
+    lastVel.current = { vx, vy, ax, ay };
   };
 
   const handlePointerUp = () => {

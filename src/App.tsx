@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { serialService, SensorData } from './lib/serial';
 import { bleService } from './lib/ble';
+import { wifiService } from './lib/wifi';
 import { mobileSensorService } from './lib/mobileSensors';
 import { mlService } from './lib/mlService';
 import { LiveChart } from './components/LiveChart';
@@ -9,7 +10,7 @@ import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
 import { TouchPadCanvas } from './components/TouchPadCanvas';
-import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut } from 'lucide-react';
+import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { auth, db, signInWithGoogle, logOut, collection, doc, setDoc, onSnapshot, query, where, orderBy, deleteDoc } from './firebase';
@@ -29,7 +30,7 @@ export interface Session {
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'sim' | 'mobile' | 'touch' | 'ble-touch' | 'serial-touch' | null>(null);
+  const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'wifi' | 'sim' | 'mobile' | 'touch' | 'ble-touch' | 'serial-touch' | 'wifi-touch' | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [data, setData] = useState<SensorData[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -279,7 +280,7 @@ function App() {
     let finalData = newData;
     
     // In combined mode, inject the latest touch coordinates from the canvas
-    if ((connectionType === 'ble-touch' || connectionType === 'serial-touch') && latestTouchRef.current) {
+    if ((connectionType && connectionType !== 'touch' && connectionType.includes('touch')) && latestTouchRef.current) {
       finalData = {
         ...newData,
         touchX: latestTouchRef.current.x,
@@ -314,6 +315,18 @@ function App() {
     bleService.onData(handleData);
     bleService.onError((err) => {
       console.error("BLE Error:", err);
+      setIsConnected(false);
+      setConnectionType(null);
+    });
+
+    // WiFi Listeners
+    wifiService.onData(handleData);
+    wifiService.onError((err) => {
+      console.error("WiFi Error:", err);
+      setIsConnected(false);
+      setConnectionType(null);
+    });
+    wifiService.onDisconnect(() => {
       setIsConnected(false);
       setConnectionType(null);
     });
@@ -353,6 +366,23 @@ function App() {
     }
   };
 
+  const connectWiFi = async (combined: boolean = false) => {
+    try {
+      setPermissionError(false);
+      await wifiService.connect('192.168.4.1');
+      setIsConnected(true);
+      setConnectionType(combined ? 'wifi-touch' : 'wifi');
+      setIsSimulating(false);
+    } catch (err: any) {
+      console.error(err);
+      if (err.name === 'SecurityError' || err.message?.includes('mixed content')) {
+        setPermissionError(true);
+      } else {
+        alert("Failed to connect to WiFi device. " + err.message);
+      }
+    }
+  };
+
   const connectBLE = async (combined: boolean = false) => {
     try {
       setPermissionError(false);
@@ -384,8 +414,9 @@ function App() {
   };
 
   const disconnect = async () => {
-    if (connectionType === 'serial') await serialService.disconnect();
-    if (connectionType === 'ble') await bleService.disconnect();
+    if (connectionType && connectionType.includes('serial')) await serialService.disconnect();
+    if (connectionType && connectionType.includes('ble')) await bleService.disconnect();
+    if (connectionType && connectionType.includes('wifi')) wifiService.disconnect();
     if (connectionType === 'mobile') mobileSensorService.stop();
     if (isSimulating) {
       if (simulationInterval.current) clearInterval(simulationInterval.current);
@@ -768,7 +799,7 @@ function App() {
             {/* Desktop status pill */}
             <div className={`hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
-              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : (connectionType === 'ble-touch' || connectionType === 'serial-touch') ? 'COMBINED MODE' : connectionType === 'touch' ? 'TOUCH PAD / PEN' : connectionType === 'ble' ? 'CUSTOM BLE DEV' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
+              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : (connectionType && connectionType.includes('touch')) ? 'COMBINED MODE' : connectionType === 'ble' ? 'CUSTOM BLE DEV' : connectionType === 'wifi' ? 'WIFI CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
             </div>
 
             {!isConnected ? (
@@ -922,7 +953,7 @@ function App() {
           <RecoveryTrendChart sessions={recordedSessions} />
         </div>
 
-        {isConnected && (connectionType === 'touch' || connectionType === 'ble-touch' || connectionType === 'serial-touch') && (
+        {isConnected && (connectionType && connectionType.includes('touch')) && (
           <TouchPadCanvas 
             onData={handleData} 
             mode={connectionType === 'touch' ? 'touch' : 'combined'}
@@ -978,7 +1009,7 @@ function App() {
               dataKeys={[
                 { key: 'fsr', color: '#eab308', name: 'Pressure' },
               ]}
-              yDomain={[0, 1024]} // Standard 10-bit ADC range
+              yDomain={[0, 4095]} // 12-bit ADC range for ESP32-S3
             />
 
             {/* Session Log / Controls */}
@@ -1159,7 +1190,7 @@ function App() {
                 </ul>
                 <p className="text-xs text-zinc-500 mb-1 font-mono">Output:</p>
                 <code className="block text-xs font-mono text-emerald-500">
-                  X:0.12,Y:0.05,Z:9.81,F:512
+                  X:-12.0,Y:50.0,Z:1003.0,F:2048
                 </code>
               </div>
             </div>
