@@ -29,10 +29,12 @@ BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
+unsigned long connectTime = 0;
 
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
+      connectTime = millis();
       Serial.println("BLE Client Connected");
     };
 
@@ -99,9 +101,8 @@ void setup() {
 
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);  
-  pAdvertising->setMinPreferred(0x12);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x00);  // set value to 0x00 to not advertise this parameter
   BLEDevice::startAdvertising();
 
   Serial.println("Data streaming configured with BLE enabled...");
@@ -167,8 +168,10 @@ void loop() {
     // Send payload over USB Serial
     Serial.println(payload);
 
-    // Send payload over Bluetooth (if connected)
-    if (deviceConnected) {
+    // Send payload over Bluetooth (if connected and stabilized)
+    // We wait 3 seconds after connection before starting to stream
+    // to prevent congesting the ESP32 BLE stack during GATT service discovery
+    if (deviceConnected && (millis() - connectTime > 3000)) {
       pCharacteristic->setValue(payload.c_str());
       pCharacteristic->notify();
     }

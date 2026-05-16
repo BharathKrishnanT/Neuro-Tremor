@@ -17,18 +17,44 @@ class BLEService {
 
     try {
       this.device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
+        filters: [{ namePrefix: 'Neuro' }],
         optionalServices: [BLE_SERVICE_UUID]
+      }).catch(e => {
+        // Fallback to acceptAllDevices if filters fail 
+        return navigator.bluetooth.requestDevice({
+           acceptAllDevices: true,
+           optionalServices: [BLE_SERVICE_UUID]
+        });
       });
 
       this.device.addEventListener('gattserverdisconnected', this.onDisconnected.bind(this));
 
-      this.server = await this.device.gatt!.connect();
-      const service = await this.server.getPrimaryService(BLE_SERVICE_UUID);
-      this.characteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+      // Retry connection logic
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          if (!this.device.gatt!.connected) {
+            this.server = await this.device.gatt!.connect();
+          } else {
+            this.server = this.device.gatt!;
+          }
+          
+          const service = await this.server.getPrimaryService(BLE_SERVICE_UUID);
+          this.characteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+          break;
+        } catch (e) {
+          retries--;
+          console.log("Retrying BLE connection...", e);
+          if (this.device.gatt!.connected) {
+            this.device.gatt!.disconnect();
+          }
+          if (retries === 0) throw e;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
 
-      await this.characteristic.startNotifications();
-      this.characteristic.addEventListener('characteristicvaluechanged', this.handleNotifications.bind(this));
+      await this.characteristic!.startNotifications();
+      this.characteristic!.addEventListener('characteristicvaluechanged', this.handleNotifications.bind(this));
       
       return true;
     } catch (error) {
