@@ -297,8 +297,8 @@ function App() {
   const handleData = useCallback((newData: SensorData) => {
     let finalData = newData;
     
-    // In combined mode, inject the latest touch coordinates from the canvas
-    if ((connectionType && connectionType !== 'touch' && connectionType.includes('touch')) && latestTouchRef.current) {
+    // Inject the latest touch coordinates from the canvas for any non-touch-only connection
+    if (connectionType !== 'touch' && latestTouchRef.current) {
       finalData = {
         ...newData,
         touchX: latestTouchRef.current.x,
@@ -975,7 +975,7 @@ function App() {
           <RecoveryTrendChart sessions={recordedSessions} />
         </div>
 
-        {isConnected && (connectionType && connectionType.includes('touch')) && (
+        {isConnected && (
           <TouchPadCanvas 
             onData={handleData} 
             mode={connectionType === 'touch' ? 'touch' : 'combined'}

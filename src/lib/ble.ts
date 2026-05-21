@@ -19,14 +19,8 @@ class BLEService {
     try {
       this.isConnecting = true;
       this.device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'Neuro' }],
+        acceptAllDevices: true,
         optionalServices: [BLE_SERVICE_UUID]
-      }).catch(e => {
-        // Fallback to acceptAllDevices if filters fail 
-        return navigator.bluetooth.requestDevice({
-           acceptAllDevices: true,
-           optionalServices: [BLE_SERVICE_UUID]
-        });
       });
 
       this.device.addEventListener('gattserverdisconnected', this.onDisconnected.bind(this));
