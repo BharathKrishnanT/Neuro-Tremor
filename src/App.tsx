@@ -4,6 +4,8 @@ import { bleService } from './lib/ble';
 import { wifiService } from './lib/wifi';
 import { mobileSensorService } from './lib/mobileSensors';
 import { mlService } from './lib/mlService';
+import { audioFeedback } from './lib/audio';
+import { exportService } from './lib/exportService';
 import { LiveChart } from './components/LiveChart';
 import { TremorAnalysis } from './components/TremorAnalysis';
 import { DatasetUploader } from './components/DatasetUploader';
@@ -48,6 +50,9 @@ function App() {
   const [errorModal, setErrorModal] = useState<{title: string, message: string} | null>(null);
   const [confirmModal, setConfirmModal] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
   const [showPenModal, setShowPenModal] = useState(false);
+  const [isStreamingExport, setIsStreamingExport] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv'|'json'>('csv');
+  const [exportDuration, setExportDuration] = useState<number>(0);
   const latestTouchRef = useRef<{x: number, y: number} | null>(null);
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
@@ -212,6 +217,19 @@ function App() {
 
   const [isIframe, setIsIframe] = useState(false);
 
+  // Audio feedback for threshold crossing
+  const previousIntensityRef = useRef<string>('Normal');
+  useEffect(() => {
+    if (metrics.intensity !== previousIntensityRef.current) {
+      if ((metrics.intensity === 'Severe' && previousIntensityRef.current !== 'Severe') || 
+          (metrics.intensity === 'Moderate' && previousIntensityRef.current === 'Mild') ||
+          (metrics.intensity === 'Moderate' && previousIntensityRef.current === 'Normal')) {
+        audioFeedback.playThresholdCrossed(metrics.intensity);
+      }
+      previousIntensityRef.current = metrics.intensity;
+    }
+  }, [metrics.intensity]);
+
   // Screen Wake Lock to keep mobile monitoring continuous
   useEffect(() => {
     let wakeLock: any = null;
@@ -292,6 +310,10 @@ function App() {
     
     if (isRecording) {
       recordingBuffer.current.push(finalData);
+    }
+    
+    if (exportService.isWriting) {
+      exportService.writeData(finalData);
     }
 
     if (!hasGyro && (Math.abs(finalData.gx) > 0.01 || Math.abs(finalData.gy) > 0.01 || Math.abs(finalData.gz) > 0.01)) {
@@ -1013,7 +1035,7 @@ function App() {
             />
 
             {/* Session Log / Controls */}
-            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 h-64 flex flex-col">
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 h-auto min-h-64 flex flex-col">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-zinc-400 text-sm font-medium uppercase tracking-wider">Session Controls</h3>
                 <div className="flex gap-2">
@@ -1026,68 +1048,131 @@ function App() {
                 </div>
               </div>
               
-              <div className="flex-1 flex flex-col items-center justify-center space-y-4 border-2 border-dashed border-zinc-800 rounded-lg bg-zinc-900/30">
-                {!isRecording ? (
-                  <button 
-                    onClick={() => {
-                      setIsRecording(true);
-                      recordingBuffer.current = [];
-                      recordingStartTime.current = Date.now();
-                    }}
-                    disabled={!isConnected}
-                    className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-500/20"
-                  >
-                    <div className="absolute inset-0 rounded-full border-4 border-red-500/30 scale-110 group-hover:scale-125 transition-transform" />
-                    <div className="w-6 h-6 bg-white rounded-sm" />
-                  </button>
-                ) : (
-                  <button 
-                    onClick={() => {
-                      setIsRecording(false);
-                      const duration = (Date.now() - recordingStartTime.current) / 1000;
-                      const deviceType = connectionType === 'mobile' ? 'mobile' : 'pen';
-                      const sessionFeatures = mlService.extractFeatures(recordingBuffer.current, deviceType);
-                      
-                      if (!user) {
-                        setErrorModal({ title: "Sign In Required", message: "Please sign in to save sessions." });
+              <div className="flex-1 flex flex-col md:flex-row gap-4">
+                <div className="flex-1 flex flex-col items-center justify-center space-y-4 border-2 border-dashed border-zinc-800 rounded-lg bg-zinc-900/30 p-4">
+                  {!isRecording ? (
+                    <button 
+                      onClick={() => {
+                        audioFeedback.playStartRecording();
+                        setIsRecording(true);
                         recordingBuffer.current = [];
-                        return;
-                      }
+                        recordingStartTime.current = Date.now();
+                      }}
+                      disabled={!isConnected}
+                      className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-500/20"
+                    >
+                      <div className="absolute inset-0 rounded-full border-4 border-red-500/30 scale-110 group-hover:scale-125 transition-transform" />
+                      <div className="w-6 h-6 bg-white rounded-sm" />
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={() => {
+                        audioFeedback.playStopRecording();
+                        setIsRecording(false);
+                        const duration = (Date.now() - recordingStartTime.current) / 1000;
+                        const deviceType = connectionType === 'mobile' ? 'mobile' : 'pen';
+                        const sessionFeatures = mlService.extractFeatures(recordingBuffer.current, deviceType);
+                        
+                        if (!user) {
+                          setErrorModal({ title: "Sign In Required", message: "Please sign in to save sessions." });
+                          recordingBuffer.current = [];
+                          return;
+                        }
 
-                      const sessionId = crypto.randomUUID();
-                      const newSession: Session = {
-                        id: sessionId,
-                        userId: user.uid,
-                        timestamp: Date.now(),
-                        duration: duration,
-                        severity: metrics.intensity,
-                        stage: metrics.stage,
-                        rms: sessionFeatures.rms,
-                        frequency: sessionFeatures.frequency,
-                        data: [...recordingBuffer.current]
-                      };
-                      
-                      setDoc(doc(db, 'sessions', sessionId), {
-                        ...newSession,
-                        data: JSON.stringify(newSession.data)
-                      }).then(() => {
-                        // Train the CNN model on this new session data
-                        mlService.trainOnSession(newSession.data, newSession.severity);
-                      }).catch(error => {
-                        console.error("Error saving session", error);
-                        setErrorModal({ title: "Save Error", message: "Failed to save session to cloud." });
-                      });
-                      
-                      recordingBuffer.current = [];
-                    }}
-                    className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-all shadow-lg"
-                  >
-                    <Square className="text-white fill-current" size={24} />
-                  </button>
-                )}
-                <p className="text-zinc-500 text-sm font-medium">
-                  {isRecording ? 'Recording Session...' : 'Start Recording'}
-                </p>
+                        const sessionId = crypto.randomUUID();
+                        const newSession: Session = {
+                          id: sessionId,
+                          userId: user.uid,
+                          timestamp: Date.now(),
+                          duration: duration,
+                          severity: metrics.intensity,
+                          stage: metrics.stage,
+                          rms: sessionFeatures.rms,
+                          frequency: sessionFeatures.frequency,
+                          data: [...recordingBuffer.current]
+                        };
+                        
+                        setDoc(doc(db, 'sessions', sessionId), {
+                          ...newSession,
+                          data: JSON.stringify(newSession.data)
+                        }).then(() => {
+                          mlService.trainOnSession(newSession.data, newSession.severity);
+                        }).catch(error => {
+                          console.error("Error saving session", error);
+                          setErrorModal({ title: "Save Error", message: "Failed to save session to cloud." });
+                        });
+                        
+                        recordingBuffer.current = [];
+                      }}
+                      className="group relative flex items-center justify-center w-16 h-16 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-all shadow-lg"
+                    >
+                      <Square className="text-white fill-current" size={24} />
+                    </button>
+                  )}
+                  <p className="text-zinc-500 text-sm font-medium text-center">
+                    {isRecording ? 'Recording Session...' : 'Record Cloud Session'}
+                  </p>
+                </div>
+
+                <div className="flex-1 flex flex-col items-center justify-center space-y-3 border-2 border-dashed border-zinc-800 rounded-lg bg-zinc-900/30 p-4">
+                  {!isStreamingExport ? (
+                    <>
+                      <div className="flex gap-2 w-full max-w-[180px]">
+                        <select 
+                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-white"
+                          value={exportFormat}
+                          onChange={(e) => setExportFormat(e.target.value as 'csv'|'json')}
+                          disabled={!isConnected}
+                        >
+                          <option value="csv">CSV</option>
+                          <option value="json">JSON</option>
+                        </select>
+                        <select
+                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-white"
+                          value={exportDuration}
+                          onChange={(e) => setExportDuration(Number(e.target.value))}
+                          disabled={!isConnected}
+                        >
+                          <option value={0}>Continuous</option>
+                          <option value={10}>10s</option>
+                          <option value={30}>30s</option>
+                          <option value={60}>1m</option>
+                        </select>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          try {
+                            await exportService.startStreaming(exportFormat, exportDuration, () => setIsStreamingExport(false));
+                            setIsStreamingExport(true);
+                          } catch (e: any) {
+                            setErrorModal({ title: "Export Error", message: e.message || "Failed to start streaming." });
+                          }
+                        }}
+                        disabled={!isConnected}
+                        className="group relative flex items-center justify-center w-12 h-12 rounded-full bg-blue-500 hover:bg-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-500/20 mt-1"
+                        title="Start Real-Time Export to File"
+                      >
+                        <Save className="text-white fill-current" size={18} />
+                      </button>
+                      <p className="text-zinc-500 text-sm font-medium text-center">Live File Stream</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-center w-12 h-12 rounded-full border-4 border-blue-500/30 animate-pulse mt-[26px]">
+                        <button 
+                          onClick={() => {
+                            exportService.stopStreaming();
+                            setIsStreamingExport(false);
+                          }}
+                          className="flex items-center justify-center w-10 h-10 rounded-full bg-zinc-700 hover:bg-zinc-600 transition-all shadow-lg text-white"
+                        >
+                          <Square className="fill-current" size={16} />
+                        </button>
+                      </div>
+                      <p className="text-blue-400 text-sm font-medium animate-pulse text-center">Writing {exportFormat.toUpperCase()}...</p>
+                    </>
+                  )}
+                </div>
               </div>
               
               {recordedSessions.length > 0 && (

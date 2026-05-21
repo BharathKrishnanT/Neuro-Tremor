@@ -1,9 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { SensorData } from '../lib/serial';
+import { Maximize2, Minimize2 } from 'lucide-react';
 
 export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onData: (data: SensorData) => void, mode?: 'touch' | 'combined', onTouchUpdate?: (x: number, y: number, pressure: number) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   
   const lastPos = useRef<{x: number, y: number, t: number} | null>(null);
   const lastVel = useRef<{vx: number, vy: number, ax: number, ay: number} | null>(null);
@@ -12,27 +14,54 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const drawGrid = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < 500; i++) {
+        const angle = 0.1 * i;
+        const x = w / 2 + (1 + angle) * Math.cos(angle) * (w > 1000 ? 8 : 5);
+        const y = h / 2 + (1 + angle) * Math.sin(angle) * (w > 1000 ? 8 : 5);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
 
-    // Optional: Draw guidelines like a spiral to trace
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < 500; i++) {
-      const angle = 0.1 * i;
-      const x = canvas.width / 2 + (1 + angle) * Math.cos(angle) * 5;
-      const y = canvas.height / 2 + (1 + angle) * Math.sin(angle) * 5;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      ctx.fillStyle = '#666';
+      ctx.font = '14px Inter';
+      ctx.textAlign = 'center';
+      ctx.fillText('Trace the spiral or draw freely', w / 2, 30);
+    };
+
+    const handleResize = () => {
+      const parent = canvas.parentElement;
+      if (!parent) return;
+      const rect = parent.getBoundingClientRect();
+      
+      // Only resize if substantially different to avoid jitter
+      if (Math.abs(canvas.width - rect.width) > 5 || Math.abs(canvas.height - rect.height) > 5) {
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        
+        const ctx = canvas.getContext('2d');
+        if (ctx) drawGrid(ctx, canvas.width, canvas.height);
+      }
+    };
+
+    const observer = new ResizeObserver(() => {
+      handleResize();
+    });
+
+    if (canvas.parentElement) {
+      observer.observe(canvas.parentElement);
     }
-    ctx.stroke();
+    
+    // Initial draw
+    handleResize();
 
-    ctx.fillStyle = '#666';
-    ctx.font = '14px Inter';
-    ctx.textAlign = 'center';
-    ctx.fillText('Trace the spiral or draw freely', canvas.width / 2, 30);
-  }, []);
+    return () => observer.disconnect();
+  }, [isFullscreen]);
 
   const getCanvasCoordinates = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -130,17 +159,30 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
   };
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 mb-8">
-      <div className="mb-4">
-        <h2 className="text-lg font-medium text-white">Touch Pad / Pen Analytics</h2>
-        <p className="text-zinc-400 text-sm">Use your mouse, trackpad, or digital pen to draw in the canvas below. The system will measure microscopic variations in acceleration as you draw.</p>
+    <div className={
+      isFullscreen
+        ? "fixed inset-0 z-50 bg-zinc-950 p-6 flex flex-col"
+        : "bg-zinc-900 border border-zinc-800 rounded-2xl p-6 mb-8 flex flex-col"
+    }>
+      <div className="mb-4 flex justify-between items-start flex-shrink-0">
+        <div>
+          <h2 className="text-lg font-medium text-white">Touch Pad / Pen Analytics</h2>
+          <p className="text-zinc-400 text-sm">Use your mouse, trackpad, or digital pen to draw in the canvas below. The system will measure microscopic variations in acceleration as you draw.</p>
+        </div>
+        <button
+          onClick={() => setIsFullscreen(!isFullscreen)}
+          className="p-2 text-zinc-400 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors flex-shrink-0 ml-4"
+          title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+        >
+          {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+        </button>
       </div>
-      <div className="w-full h-80 bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 cursor-crosshair">
+      <div className={`w-full ${isFullscreen ? 'flex-1' : 'h-80'} bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800 cursor-crosshair min-h-0 relative`}>
         <canvas
           ref={canvasRef}
           width={800}
           height={320}
-          className="w-full h-full touch-none"
+          className="w-full h-full touch-none block"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -148,13 +190,15 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
           onPointerCancel={handlePointerUp}
         />
       </div>
-      <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-end flex-shrink-0">
         <button 
           onClick={() => {
             const canvas = canvasRef.current;
             const ctx = canvas?.getContext('2d');
             if (ctx && canvas) {
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              const w = canvas.width;
+              const h = canvas.height;
+              ctx.clearRect(0, 0, w, h);
               
               // Redraw spiral
               ctx.strokeStyle = '#333';
@@ -162,8 +206,8 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
               ctx.beginPath();
               for (let i = 0; i < 500; i++) {
                 const angle = 0.1 * i;
-                const x = canvas.width / 2 + (1 + angle) * Math.cos(angle) * 5;
-                const y = canvas.height / 2 + (1 + angle) * Math.sin(angle) * 5;
+                const x = w / 2 + (1 + angle) * Math.cos(angle) * (w > 1000 ? 8 : 5);
+                const y = h / 2 + (1 + angle) * Math.sin(angle) * (w > 1000 ? 8 : 5);
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
               }
@@ -172,7 +216,7 @@ export function TouchPadCanvas({ onData, mode = 'touch', onTouchUpdate }: { onDa
               ctx.fillStyle = '#666';
               ctx.font = '14px Inter';
               ctx.textAlign = 'center';
-              ctx.fillText('Trace the spiral or draw freely', canvas.width / 2, 30);
+              ctx.fillText('Trace the spiral or draw freely', w / 2, 30);
             }
           }}
           className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors rounded-lg text-sm font-medium"
