@@ -9,6 +9,7 @@ class BLEService {
   private characteristic: BluetoothRemoteGATTCharacteristic | null = null;
   private onDataCallback: ((data: SensorData) => void) | null = null;
   private onErrorCallback: ((error: string) => void) | null = null;
+  private isConnecting: boolean = false;
 
   async connect() {
     if (!("bluetooth" in navigator)) {
@@ -16,6 +17,7 @@ class BLEService {
     }
 
     try {
+      this.isConnecting = true;
       this.device = await navigator.bluetooth.requestDevice({
         filters: [{ namePrefix: 'Neuro' }],
         optionalServices: [BLE_SERVICE_UUID]
@@ -29,49 +31,48 @@ class BLEService {
 
       this.device.addEventListener('gattserverdisconnected', this.onDisconnected.bind(this));
 
-      // Retry connection logic
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          if (!this.device.gatt!.connected) {
-            this.server = await this.device.gatt!.connect();
-          } else {
-            this.server = this.device.gatt!;
-          }
-          
-          const service = await this.server.getPrimaryService(BLE_SERVICE_UUID);
-          this.characteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
-          break;
-        } catch (e) {
-          retries--;
-          console.log("Retrying BLE connection...", e);
-          if (this.device.gatt!.connected) {
-            this.device.gatt!.disconnect();
-          }
-          if (retries === 0) throw e;
-          await new Promise(r => setTimeout(r, 2000));
+      try {
+        if (!this.device.gatt!.connected) {
+          this.server = await this.device.gatt!.connect();
+        } else {
+          this.server = this.device.gatt!;
         }
+        
+        // Wait extremely briefly. Often Chrome triggers disconnected event in 300-500ms
+        // If it throws during getPrimaryService, we'll catch it.
+        const service = await this.server.getPrimaryService(BLE_SERVICE_UUID);
+        this.characteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+      } catch (e: any) {
+        console.error("BLE initial connection error", e);
+        try {
+          if (this.device.gatt?.connected) this.device.gatt.disconnect();
+        } catch (err) {}
+        throw e;
       }
 
       await this.characteristic!.startNotifications();
       this.characteristic!.addEventListener('characteristicvaluechanged', this.handleNotifications.bind(this));
       
+      this.isConnecting = false;
       return true;
     } catch (error) {
+      this.isConnecting = false;
       console.error("BLE Connection failed", error);
       throw error;
     }
   }
 
   async disconnect() {
+    this.isConnecting = false;
     if (this.device && this.device.gatt?.connected) {
       this.device.gatt.disconnect();
     }
   }
 
   private onDisconnected() {
+    if (this.isConnecting) return; // Do not trigger UI error if we are actively managing connection retries
     if (this.onErrorCallback) {
-      this.onErrorCallback("Device disconnected");
+      this.onErrorCallback("Device disconnected - If using ESP32, please check that you have flashed the latest firmware with the MTU fix.");
     }
   }
 

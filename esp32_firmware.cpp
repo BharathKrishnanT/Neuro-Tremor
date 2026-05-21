@@ -87,6 +87,10 @@ void setup() {
 
   // Initialize BLE
   BLEDevice::init("NeuroTremor Pen");
+  // CRITICAL: Request higher MTU to support payloads > 20 bytes.
+  // Without this, the ESP32-S3 BLE stack often crashes and disconnects when sending long strings
+  BLEDevice::setMTU(512); 
+
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
