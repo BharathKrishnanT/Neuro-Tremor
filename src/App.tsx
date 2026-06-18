@@ -12,7 +12,7 @@ import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
 import { TouchPadCanvas } from './components/TouchPadCanvas';
-import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi } from 'lucide-react';
+import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi, Target, Sun, Moon } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { auth, db, signInWithGoogle, logOut, collection, doc, setDoc, onSnapshot, query, where, orderBy, deleteDoc } from './firebase';
@@ -45,8 +45,33 @@ function App() {
   const [playbackIndex, setPlaybackIndex] = useState(0);
   const [isPlayingDataset, setIsPlayingDataset] = useState(false);
   const [isPausedDataset, setIsPausedDataset] = useState(false);
+  const [isPausedRealTime, setIsPausedRealTime] = useState(false);
+  const isPausedRealTimeRef = useRef(false);
+
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationTimeLeft, setCalibrationTimeLeft] = useState(0);
+  const isCalibratingRef = useRef(false);
+  const calibrationBuffer = useRef<{ax: number, ay: number, az: number, gx: number, gy: number, gz: number}[]>([]);
+  const calibrationOffsets = useRef({ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0});
+  const calibrationTimer = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    isPausedRealTimeRef.current = isPausedRealTime;
+  }, [isPausedRealTime]);
+
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isHighContrast, setIsHighContrast] = useState(() => {
+    return document.documentElement.classList.contains('light-theme');
+  });
+
+  useEffect(() => {
+    if (isHighContrast) {
+      document.documentElement.classList.add('light-theme');
+    } else {
+      document.documentElement.classList.remove('light-theme');
+    }
+  }, [isHighContrast]);
   const [errorModal, setErrorModal] = useState<{title: string, message: string} | null>(null);
   const [confirmModal, setConfirmModal] = useState<{title: string, message: string, onConfirm: () => void} | null>(null);
   const [showPenModal, setShowPenModal] = useState(false);
@@ -73,6 +98,8 @@ function App() {
       
       const newPoints = [...uiBuffer.current];
       uiBuffer.current = [];
+
+      if (isPausedRealTimeRef.current) return;
 
       setData(prev => {
         const updated = [...prev, ...newPoints];
@@ -296,11 +323,29 @@ function App() {
 
   const handleData = useCallback((newData: SensorData) => {
     let finalData = newData;
+
+    if (isCalibratingRef.current) {
+      calibrationBuffer.current.push({
+        ax: newData.ax, ay: newData.ay, az: newData.az,
+        gx: newData.gx, gy: newData.gy, gz: newData.gz
+      });
+    }
+
+    // Apply baseline offsets
+    finalData = {
+      ...finalData,
+      ax: finalData.ax - calibrationOffsets.current.ax,
+      ay: finalData.ay - calibrationOffsets.current.ay,
+      az: finalData.az - calibrationOffsets.current.az,
+      gx: finalData.gx - calibrationOffsets.current.gx,
+      gy: finalData.gy - calibrationOffsets.current.gy,
+      gz: finalData.gz - calibrationOffsets.current.gz,
+    };
     
     // Inject the latest touch coordinates from the canvas for any non-touch-only connection
     if (connectionType !== 'touch' && latestTouchRef.current) {
       finalData = {
-        ...newData,
+        ...finalData,
         touchX: latestTouchRef.current.x,
         touchY: latestTouchRef.current.y
       };
@@ -545,6 +590,41 @@ function App() {
 
   const clearData = () => {
     setData([]);
+  };
+
+  const startCalibration = () => {
+    if (isCalibratingRef.current || !isConnected) return;
+    
+    isCalibratingRef.current = true;
+    setIsCalibrating(true);
+    setCalibrationTimeLeft(3);
+    calibrationBuffer.current = [];
+    calibrationOffsets.current = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 }; // Reset during calibration to get raw values
+
+    let timeLeft = 3;
+    calibrationTimer.current = setInterval(() => {
+      timeLeft -= 1;
+      setCalibrationTimeLeft(timeLeft);
+      if (timeLeft <= 0) {
+        if (calibrationTimer.current) clearInterval(calibrationTimer.current);
+        isCalibratingRef.current = false;
+        setIsCalibrating(false);
+        
+        if (calibrationBuffer.current.length > 0) {
+          const sum = calibrationBuffer.current.reduce((acc, val) => {
+            acc.ax += val.ax; acc.ay += val.ay; acc.az += val.az;
+            acc.gx += val.gx; acc.gy += val.gy; acc.gz += val.gz;
+            return acc;
+          }, {ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0});
+          
+          const count = calibrationBuffer.current.length;
+          calibrationOffsets.current = {
+            ax: sum.ax / count, ay: sum.ay / count, az: sum.az / count,
+            gx: sum.gx / count, gy: sum.gy / count, gz: sum.gz / count
+          };
+        }
+      }
+    }, 1000);
   };
 
   const exportSession = () => {
@@ -867,16 +947,39 @@ function App() {
                 </button>
               </div>
             ) : (
-              <button 
-                onClick={disconnect}
-                className="flex items-center space-x-2 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-medium"
-              >
-                <Square size={16} />
-                <span>{isPlayingDataset ? 'Stop Playback' : isSimulating ? 'Stop Demo' : 'Disconnect'}</span>
-              </button>
+              <div className="flex space-x-2">
+                {!isPlayingDataset && (
+                  <button
+                    onClick={startCalibration}
+                    disabled={isCalibrating}
+                    className={`flex items-center space-x-2 px-4 py-2 border rounded-lg transition-colors text-sm font-medium ${
+                      isCalibrating ? 'bg-amber-500/20 border-amber-500/30 text-amber-500' : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                    }`}
+                  >
+                    <Target size={16} className={isCalibrating ? 'animate-pulse' : ''} />
+                    <span>{isCalibrating ? `Calibrating (${calibrationTimeLeft}s)` : 'Calibrate Baseline'}</span>
+                  </button>
+                )}
+                <button 
+                  onClick={disconnect}
+                  className="flex items-center space-x-2 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-medium"
+                >
+                  <Square size={16} />
+                  <span>{isPlayingDataset ? 'Stop Playback' : isSimulating ? 'Stop Demo' : 'Disconnect'}</span>
+                </button>
+              </div>
             )}
 
             <div className="h-6 w-px bg-zinc-800 hidden sm:block mx-1"></div>
+
+            <button
+              onClick={() => setIsHighContrast(!isHighContrast)}
+              className="flex items-center space-x-1.5 px-3 py-2 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-sm font-medium"
+              title={isHighContrast ? "Switch to Dark Mode" : "Switch to High Contrast Light Mode"}
+            >
+              {isHighContrast ? <Moon size={16} /> : <Sun size={16} />}
+              <span className="hidden md:inline">{isHighContrast ? 'Dark' : 'Light'}</span>
+            </button>
 
             {user ? (
               <button 
@@ -964,6 +1067,61 @@ function App() {
             data={loadedDataset} 
             onPlay={() => startDatasetPlayback(loadedDataset)}
             onClear={() => setLoadedDataset(null)}
+          />
+        )}
+
+        {isConnected && connectionType !== 'sim' && data.length > 0 && (
+          <div className="mb-8 bg-zinc-900 border border-blue-500/20 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <span className="text-xs font-medium text-blue-400 uppercase tracking-wider">Real-Time Analysis Live</span>
+                <div className="text-xs text-zinc-500 mt-1">Collecting data from {connectionType?.includes('touch') ? 'Touch Pad & Pen' : connectionType === 'mobile' ? 'Mobile' : 'Device'}</div>
+              </div>
+              <div className="flex space-x-2">
+                {isPausedRealTime ? (
+                  <button 
+                    onClick={() => setIsPausedRealTime(false)}
+                    className="flex items-center space-x-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors text-xs font-medium"
+                  >
+                    <Play size={14} />
+                    <span>Resume</span>
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => setIsPausedRealTime(true)}
+                    className="flex items-center space-x-2 px-3 py-1.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-700 transition-colors text-xs font-medium"
+                  >
+                    <Pause size={14} />
+                    <span>Pause</span>
+                  </button>
+                )}
+                <button 
+                  onClick={() => {
+                    setIsPausedRealTime(false);
+                    setLoadedDataset(data);
+                    disconnect();
+                  }}
+                  className="flex items-center space-x-2 px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-xs font-medium"
+                >
+                  <Square size={14} />
+                  <span>Stop Analysis</span>
+                </button>
+              </div>
+            </div>
+            {isPausedRealTime && (
+              <p className="text-xs text-zinc-400 mt-2 italic">Chart paused, but sensor stream is ongoing in background.</p>
+            )}
+          </div>
+        )}
+
+        {isConnected && isPausedRealTime && (
+          <DatasetSummary 
+            data={data} 
+            title="Analysis of Data Analysed Until Pause"
+            onPlay={() => setIsPausedRealTime(false)}
+            onClear={() => {
+               // Do nothing for clear during live
+            }}
           />
         )}
         
@@ -1260,32 +1418,24 @@ function App() {
 
         {/* Instructions */}
         <div className="border-t border-zinc-800 pt-8 mt-8">
-          <h4 className="text-zinc-400 font-medium mb-4">Connection Guide</h4>
+          <h4 className="text-zinc-400 font-medium mb-4">User Guide</h4>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm text-zinc-500">
             <div className="space-y-2">
-              <strong className="text-zinc-300 block">1. Prepare Device</strong>
-              <p>Flash your ESP32-C3 with the provided firmware (115200 baud).</p>
-              <div className="bg-zinc-900 p-2 rounded border border-zinc-800 mt-2">
-                <p className="text-xs text-zinc-500 mb-1 font-mono">Pinout:</p>
-                <ul className="text-xs text-zinc-400 font-mono grid grid-cols-2 gap-1 mb-2">
-                  <li>SDA: GPIO 3</li>
-                  <li>SCL: GPIO 4</li>
-                  <li>AD0: GPIO 2</li>
-                  <li>FSR: GPIO 0</li>
-                </ul>
-                <p className="text-xs text-zinc-500 mb-1 font-mono">Output:</p>
-                <code className="block text-xs font-mono text-emerald-500">
-                  X:-12.0,Y:50.0,Z:1003.0,F:2048
-                </code>
+              <strong className="text-zinc-300 block">1. Hardware Setup</strong>
+              <p>Attach the IMU/Force sensor device securely to your finger or pen. Ensure no loose wiring affects natural movement.</p>
+              <div className="bg-zinc-900 p-3 rounded border border-zinc-800 mt-2">
+                <p className="text-xs text-zinc-400">
+                  Supported Inputs: ESP32 Custom Hardware (Serial/BLE/WiFi), Mobile Phone Sensors, Digital Pen / Mouse, or uploaded Dataset files.
+                </p>
               </div>
             </div>
             <div className="space-y-2">
-              <strong className="text-zinc-300 block">2. Connect via USB</strong>
-              <p>Plug the device into your computer. Click "Connect Device" and select the CP210x or USB Serial port.</p>
+              <strong className="text-zinc-300 block">2. Establish Connection</strong>
+              <p>Click the "Connect Devices" button at the top to select your preferred connection method. Allow necessary permissions and pair with your device.</p>
             </div>
             <div className="space-y-2">
-              <strong className="text-zinc-300 block">3. Monitor & Analyze</strong>
-              <p>Real-time accelerometer and force data will appear. Gyroscope will appear if available.</p>
+              <strong className="text-zinc-300 block">3. Calibrate & Analyze</strong>
+              <p>Hold the sensor completely still and click "Calibrate Baseline" to zero the offset. Perform standard tasks (like drawing spirals) while the app captures real-time tremor severity and frequency.</p>
             </div>
           </div>
         </div>

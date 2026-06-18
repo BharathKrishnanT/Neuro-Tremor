@@ -48,7 +48,7 @@ export const generateClinicalReport = (session: Session) => {
   doc.line(14, currentY + 2, 196, currentY + 2);
 
   const findingsData = [
-    ['Tremor Intensity', session.severity],
+    ['Average Tremor Severity', session.severity],
     ['Clinical Stage', session.stage],
     ['RMS Tremor (G-Force)', session.rms.toFixed(4)],
     ['Dominant Frequency', `${session.frequency.toFixed(2)} Hz`]

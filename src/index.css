@@ -1,1 +1,56 @@
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Light Theme Overrides for Clinical Readability */
+html.light-theme {
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --bg-modal: rgba(255, 255, 255, 0.85);
+  --border-color: #cbd5e1;
+  --border-light: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #475569;
+  --text-faint: #64748b;
+  --grid-line: #e2e8f0;
+}
+
+html.light-theme body {
+  background-color: var(--bg-main) !important;
+  color: var(--text-primary) !important;
+}
+
+.light-theme .bg-black { background-color: var(--bg-main) !important; }
+.light-theme .bg-zinc-900 { background-color: var(--bg-card) !important; }
+.light-theme .bg-zinc-800 { background-color: var(--bg-card-hover) !important; }
+.light-theme .bg-zinc-700, .light-theme .bg-zinc-600 { background-color: var(--border-light) !important; }
+
+.light-theme .bg-zinc-900\/50, .light-theme .bg-black\/50 { background-color: rgba(255, 255, 255, 0.8) !important; }
+.light-theme .bg-black\/80 { background-color: var(--bg-modal) !important; }
+
+.light-theme .border-zinc-800, .light-theme .border-zinc-700 { border-color: var(--border-color) !important; }
+.light-theme .border-purple-500\/30 { border-color: rgba(168, 85, 247, 0.5) !important; }
+.light-theme .border-blue-500\/20 { border-color: rgba(59, 130, 246, 0.4) !important; }
+.light-theme .border-emerald-500\/20 { border-color: rgba(16, 185, 129, 0.4) !important; }
+
+.light-theme .text-white, .light-theme .text-zinc-200 { color: var(--text-primary) !important; }
+.light-theme .text-zinc-300 { color: var(--text-secondary) !important; }
+.light-theme .text-zinc-400 { color: var(--text-muted) !important; }
+.light-theme .text-zinc-500 { color: var(--text-faint) !important; }
+
+.light-theme .fill-current { fill: currentColor !important; }
+
+/* Recharts Overrides */
+.light-theme .recharts-cartesian-grid-horizontal line,
+.light-theme .recharts-cartesian-grid-vertical line {
+  stroke: var(--grid-line) !important;
+}
+.light-theme .recharts-text.recharts-cartesian-axis-tick-value {
+  fill: var(--text-faint) !important;
+}
+

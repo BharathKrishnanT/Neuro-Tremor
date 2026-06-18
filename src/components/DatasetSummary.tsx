@@ -1,8 +1,9 @@
 import React from 'react';
 import { SensorData } from '../lib/serial';
 import { mlService } from '../lib/mlService';
-import { Play, Trash2 } from 'lucide-react';
+import { Play, Trash2, FileText } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { generateClinicalReport } from '../lib/reportGenerator';
 
 interface DatasetSummaryProps {
   data: SensorData[];
@@ -13,6 +14,19 @@ interface DatasetSummaryProps {
 
 export const DatasetSummary: React.FC<DatasetSummaryProps> = ({ data, title = "Dataset Analysis Summary", onPlay, onClear }) => {
   const features = mlService.extractFeatures(data, 'pen');
+  const severityValue = mlService.heuristicPrediction(features, 'pen');
+  
+  // Create a temporary session object for the report
+  const sessionForReport = {
+    id: `temp-${Date.now()}`,
+    timestamp: Date.now(),
+    duration: data.length > 0 ? (data.length / 200) : 0, // Assuming ~200Hz
+    data,
+    severity: severityValue.toFixed(2),
+    stage: severityValue > 3 ? 'Stage 3' : severityValue > 2 ? 'Stage 2' : severityValue > 1 ? 'Stage 1' : 'Normal',
+    rms: features.rms,
+    frequency: features.frequency,
+  };
   
   // Calculate severity distribution (mocked for now based on segments)
   const segmentSize = 100;
@@ -43,7 +57,14 @@ export const DatasetSummary: React.FC<DatasetSummaryProps> = ({ data, title = "D
     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 mb-8">
       <div className="flex items-center justify-between mb-6">
         <h3 className="text-lg font-semibold text-white">{title}</h3>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button 
+            onClick={() => generateClinicalReport(sessionForReport)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors text-sm font-medium border border-blue-500/30"
+          >
+            <FileText className="w-4 h-4" />
+            <span className="hidden sm:inline">Download Report</span>
+          </button>
           <button 
             onClick={onPlay}
             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors text-sm font-medium"
