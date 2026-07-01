@@ -26,11 +26,12 @@ html.light-theme body {
 }
 
 .light-theme .bg-black { background-color: var(--bg-main) !important; }
+.light-theme .bg-zinc-950 { background-color: var(--bg-card) !important; }
 .light-theme .bg-zinc-900 { background-color: var(--bg-card) !important; }
 .light-theme .bg-zinc-800 { background-color: var(--bg-card-hover) !important; }
 .light-theme .bg-zinc-700, .light-theme .bg-zinc-600 { background-color: var(--border-light) !important; }
 
-.light-theme .bg-zinc-900\/50, .light-theme .bg-black\/50 { background-color: rgba(255, 255, 255, 0.8) !important; }
+.light-theme .bg-zinc-900\/30, .light-theme .bg-zinc-900\/50, .light-theme .bg-black\/50, .light-theme .bg-zinc-950\/50 { background-color: rgba(255, 255, 255, 0.8) !important; }
 .light-theme .bg-black\/80 { background-color: var(--bg-modal) !important; }
 
 .light-theme .border-zinc-800, .light-theme .border-zinc-700 { border-color: var(--border-color) !important; }
@@ -42,6 +43,21 @@ html.light-theme body {
 .light-theme .text-zinc-300 { color: var(--text-secondary) !important; }
 .light-theme .text-zinc-400 { color: var(--text-muted) !important; }
 .light-theme .text-zinc-500 { color: var(--text-faint) !important; }
+
+/* Keep text white on primary colored elements */
+.light-theme .bg-blue-500.text-white, .light-theme .bg-blue-600.text-white,
+.light-theme .bg-red-500.text-white, .light-theme .bg-red-600.text-white,
+.light-theme .bg-emerald-500.text-white, .light-theme .bg-emerald-600.text-white,
+.light-theme .bg-purple-500.text-white, .light-theme .bg-purple-600.text-white {
+  color: #ffffff !important;
+}
+
+.light-theme .bg-blue-500 .text-white, .light-theme .bg-blue-600 .text-white,
+.light-theme .bg-red-500 .text-white, .light-theme .bg-red-600 .text-white,
+.light-theme .bg-emerald-500 .text-white, .light-theme .bg-emerald-600 .text-white,
+.light-theme .bg-purple-500 .text-white, .light-theme .bg-purple-600 .text-white {
+  color: #ffffff !important;
+}
 
 .light-theme .fill-current { fill: currentColor !important; }
 
