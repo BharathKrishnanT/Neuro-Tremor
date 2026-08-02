@@ -2,14 +2,22 @@ import { SensorData } from './serial';
 
 export const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 export const BLE_CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+export const BLE_BATTERY_SERVICE_UUID = "battery_service";
+export const BLE_BATTERY_CHARACTERISTIC_UUID = "battery_level";
 
 class BLEService {
   private device: BluetoothDevice | null = null;
   private server: BluetoothRemoteGATTServer | null = null;
   private characteristic: BluetoothRemoteGATTCharacteristic | null = null;
+  private batteryCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
   private onDataCallback: ((data: SensorData) => void) | null = null;
+  private onBatteryCallback: ((level: number) => void) | null = null;
   private onErrorCallback: ((error: string) => void) | null = null;
   private isConnecting: boolean = false;
+
+  getDeviceName(): string | undefined {
+    return this.device?.name;
+  }
 
   async connect() {
     if (!("bluetooth" in navigator)) {
@@ -19,8 +27,8 @@ class BLEService {
     try {
       this.isConnecting = true;
       this.device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [BLE_SERVICE_UUID]
+        filters: [{ services: [BLE_SERVICE_UUID] }],
+        optionalServices: [BLE_BATTERY_SERVICE_UUID]
       });
 
       this.device.addEventListener('gattserverdisconnected', this.onDisconnected.bind(this));
@@ -36,6 +44,20 @@ class BLEService {
         // If it throws during getPrimaryService, we'll catch it.
         const service = await this.server.getPrimaryService(BLE_SERVICE_UUID);
         this.characteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+        
+        try {
+          const batteryService = await this.server.getPrimaryService(BLE_BATTERY_SERVICE_UUID);
+          this.batteryCharacteristic = await batteryService.getCharacteristic(BLE_BATTERY_CHARACTERISTIC_UUID);
+          
+          const batteryValue = await this.batteryCharacteristic.readValue();
+          const batteryLevel = batteryValue.getUint8(0);
+          if (this.onBatteryCallback) this.onBatteryCallback(batteryLevel);
+          
+          await this.batteryCharacteristic.startNotifications();
+          this.batteryCharacteristic.addEventListener('characteristicvaluechanged', this.handleBatteryNotification.bind(this));
+        } catch (batteryError) {
+          console.warn("Battery service not available on this device", batteryError);
+        }
       } catch (e: any) {
         console.error("BLE initial connection error", e);
         try {
@@ -68,6 +90,13 @@ class BLEService {
     if (this.onErrorCallback) {
       this.onErrorCallback("Device disconnected - If using ESP32, please check that you have flashed the latest firmware with the MTU fix.");
     }
+  }
+
+  private handleBatteryNotification(event: Event) {
+    const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
+    if (!value) return;
+    const batteryLevel = value.getUint8(0);
+    if (this.onBatteryCallback) this.onBatteryCallback(batteryLevel);
   }
 
   private handleNotifications(event: Event) {
@@ -117,6 +146,10 @@ class BLEService {
 
   onData(callback: (data: SensorData) => void) {
     this.onDataCallback = callback;
+  }
+
+  onBattery(callback: (level: number) => void) {
+    this.onBatteryCallback = callback;
   }
 
   onError(callback: (error: string) => void) {

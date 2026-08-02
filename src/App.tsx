@@ -12,7 +12,7 @@ import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
 import { TouchPadCanvas } from './components/TouchPadCanvas';
-import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi, Target, Sun, Moon } from 'lucide-react';
+import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi, Target, Sun, Moon, Battery, BatteryFull, BatteryMedium, BatteryLow, BatteryWarning } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { auth, db, signInWithGoogle, logOut, collection, doc, setDoc, onSnapshot, query, where, orderBy, deleteDoc } from './firebase';
@@ -33,6 +33,7 @@ export interface Session {
 function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'wifi' | 'sim' | 'mobile' | 'touch' | 'ble-touch' | 'serial-touch' | 'wifi-touch' | null>(null);
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [data, setData] = useState<SensorData[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -380,6 +381,7 @@ function App() {
 
     // BLE Listeners
     bleService.onData(handleData);
+    bleService.onBattery(setBatteryLevel);
     bleService.onError((err) => {
       console.error("BLE Error:", err);
       setIsConnected(false);
@@ -400,6 +402,7 @@ function App() {
 
     // Mobile Listeners
     mobileSensorService.onData(handleData);
+    mobileSensorService.onBattery(setBatteryLevel);
     mobileSensorService.onError((err) => {
       console.error("Mobile Sensor Error:", err);
       setIsConnected(false);
@@ -492,6 +495,7 @@ function App() {
     stopDatasetPlayback();
     setIsConnected(false);
     setConnectionType(null);
+    setBatteryLevel(null);
   };
 
   const stopDatasetPlayback = useCallback(() => {
@@ -893,7 +897,7 @@ function App() {
             {/* Mobile-only status pill */}
             <div className={`sm:hidden flex items-center space-x-2 px-2 py-1 rounded-full text-[10px] font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
               <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
-              <span>{isConnected ? (connectionType === 'mobile' ? 'MOBILE' : 'CONNECTED') : 'DISCONNECTED'}</span>
+              <span>{isConnected ? (connectionType === 'ble' ? (bleService.getDeviceName() || 'BLE').toUpperCase() : connectionType === 'mobile' ? 'MOBILE' : 'CONNECTED') : 'DISCONNECTED'}</span>
             </div>
           </div>
 
@@ -901,8 +905,15 @@ function App() {
             {/* Desktop status pill */}
             <div className={`hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ${isConnected ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
-              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : (connectionType && connectionType.includes('touch')) ? 'COMBINED MODE' : connectionType === 'ble' ? 'CUSTOM BLE DEV' : connectionType === 'wifi' ? 'WIFI CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
+              <span>{isConnected ? (isPlayingDataset ? 'PLAYING DATASET' : isSimulating ? 'SIMULATING' : (connectionType && connectionType.includes('touch')) ? 'COMBINED MODE' : connectionType === 'ble' ? (bleService.getDeviceName() || 'CUSTOM BLE DEV').toUpperCase() : connectionType === 'wifi' ? 'WIFI CONNECTED' : connectionType === 'mobile' ? 'MOBILE SENSORS' : 'USB CONNECTED') : 'DISCONNECTED'}</span>
             </div>
+            
+            {batteryLevel !== null && isConnected && (connectionType === 'ble' || connectionType === 'mobile' || connectionType === 'ble-touch') && (
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full text-xs font-medium border bg-zinc-800 border-zinc-700 text-zinc-300" title="Device Battery Level">
+                <Battery size={14} className={batteryLevel > 20 ? "text-emerald-400" : "text-red-400"} />
+                <span>{batteryLevel}%</span>
+              </div>
+            )}
 
             {!isConnected ? (
               <div className="flex flex-wrap justify-center gap-2">

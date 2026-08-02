@@ -2,9 +2,16 @@ import { SensorData } from './serial';
 
 class MobileSensorService {
   private onDataCallback: ((data: SensorData) => void) | null = null;
+  private onBatteryCallback: ((level: number) => void) | null = null;
   private onErrorCallback: ((error: string) => void) | null = null;
   private isListening = false;
   private pollingInterval: NodeJS.Timeout | null = null;
+  private batteryManager: any = null;
+  private handleBatteryChange = () => {
+    if (this.onBatteryCallback && this.batteryManager) {
+      this.onBatteryCallback(Math.round(this.batteryManager.level * 100));
+    }
+  };
 
   private lastMotion = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0 };
   private lastOrientation = { alpha: 0, beta: 0, gamma: 0 };
@@ -43,6 +50,16 @@ class MobileSensorService {
     window.addEventListener('deviceorientation', this.handleOrientation);
     this.isListening = true;
 
+    try {
+      if ('getBattery' in navigator) {
+        this.batteryManager = await (navigator as any).getBattery();
+        this.handleBatteryChange();
+        this.batteryManager.addEventListener('levelchange', this.handleBatteryChange);
+      }
+    } catch (e) {
+      console.warn("Battery status API not available or error:", e);
+    }
+
     // Start a continuous polling loop at 200Hz (5ms) to reduce latency
     this.pollingInterval = setInterval(() => {
       this.emitData();
@@ -52,6 +69,10 @@ class MobileSensorService {
   stop() {
     window.removeEventListener('devicemotion', this.handleMotion);
     window.removeEventListener('deviceorientation', this.handleOrientation);
+    if (this.batteryManager) {
+      this.batteryManager.removeEventListener('levelchange', this.handleBatteryChange);
+      this.batteryManager = null;
+    }
     this.isListening = false;
     
     if (this.pollingInterval) {
@@ -129,6 +150,10 @@ class MobileSensorService {
 
   onData(callback: (data: SensorData) => void) {
     this.onDataCallback = callback;
+  }
+
+  onBattery(callback: (level: number) => void) {
+    this.onBatteryCallback = callback;
   }
 
   onError(callback: (error: string) => void) {
