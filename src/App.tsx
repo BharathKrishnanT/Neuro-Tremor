@@ -12,6 +12,8 @@ import { DatasetUploader } from './components/DatasetUploader';
 import { DatasetSummary } from './components/DatasetSummary';
 import { RecoveryTrendChart } from './components/RecoveryTrendChart';
 import { TouchPadCanvas } from './components/TouchPadCanvas';
+import { LanguageSelector } from './components/LanguageSelector';
+import { useLanguage } from './lib/i18n';
 import { Activity, Bluetooth, Cable, Play, Square, Save, Trash2, Settings, ExternalLink, AlertCircle, Upload, TrendingUp, Pause, Smartphone, FileText, LogIn, LogOut, Wifi, Target, Sun, Moon, Battery, BatteryFull, BatteryMedium, BatteryLow, BatteryWarning } from 'lucide-react';
 import { generateClinicalReport } from './lib/reportGenerator';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -31,6 +33,7 @@ export interface Session {
 }
 
 function App() {
+  const { t } = useLanguage();
   const [isConnected, setIsConnected] = useState(false);
   const [connectionType, setConnectionType] = useState<'serial' | 'ble' | 'wifi' | 'sim' | 'mobile' | 'touch' | 'ble-touch' | 'serial-touch' | 'wifi-touch' | null>(null);
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
@@ -930,7 +933,7 @@ function App() {
                   title="Connect via USB Cable"
                 >
                   <Cable size={16} />
-                  <span className="hidden md:inline">USB</span>
+                  <span className="hidden md:inline">{t('usb')}</span>
                 </button>
                 <button 
                   onClick={connectMobile}
@@ -938,7 +941,7 @@ function App() {
                   title="Use Mobile Sensors"
                 >
                   <Smartphone size={16} />
-                  <span className="hidden md:inline">Mobile</span>
+                  <span className="hidden md:inline">{t('mobile')}</span>
                 </button>
                 <button 
                   onClick={() => setShowPenModal(true)}
@@ -946,7 +949,7 @@ function App() {
                   title="Connect Pen or Touch Pad"
                 >
                   <FileText size={16} />
-                  <span className="hidden md:inline">Pen/Touch</span>
+                  <span className="hidden md:inline">{t('penTouch')}</span>
                 </button>
                 <button 
                   onClick={toggleSimulation}
@@ -954,7 +957,7 @@ function App() {
                   title="Run Demo Simulation"
                 >
                   <Play size={16} />
-                  <span className="hidden md:inline">Demo</span>
+                  <span className="hidden md:inline">{t('demo')}</span>
                 </button>
               </div>
             ) : (
@@ -968,7 +971,7 @@ function App() {
                     }`}
                   >
                     <Target size={16} className={isCalibrating ? 'animate-pulse' : ''} />
-                    <span>{isCalibrating ? `Calibrating (${calibrationTimeLeft}s)` : 'Calibrate Baseline'}</span>
+                    <span>{isCalibrating ? `${t('calibrating')} (${calibrationTimeLeft}s)` : t('calibrate')}</span>
                   </button>
                 )}
                 <button 
@@ -976,12 +979,14 @@ function App() {
                   className="flex items-center space-x-2 px-4 py-2 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors text-sm font-medium"
                 >
                   <Square size={16} />
-                  <span>{isPlayingDataset ? 'Stop Playback' : isSimulating ? 'Stop Demo' : 'Disconnect'}</span>
+                  <span>{isPlayingDataset ? t('stopPlayback') : isSimulating ? t('stopDemo') : t('disconnect')}</span>
                 </button>
               </div>
             )}
 
             <div className="h-6 w-px bg-zinc-800 hidden sm:block mx-1"></div>
+
+            <LanguageSelector />
 
             <button
               onClick={() => setIsHighContrast(!isHighContrast)}
@@ -989,7 +994,7 @@ function App() {
               title={isHighContrast ? "Switch to Dark Mode" : "Switch to High Contrast Light Mode"}
             >
               {isHighContrast ? <Moon size={16} /> : <Sun size={16} />}
-              <span className="hidden md:inline">{isHighContrast ? 'Dark' : 'Light'}</span>
+              <span className="hidden md:inline">{isHighContrast ? t('dark') : t('light')}</span>
             </button>
 
             {user ? (
@@ -999,7 +1004,7 @@ function App() {
                 title="Sign Out"
               >
                 <img src={user.photoURL || ''} alt="User" className="w-4 h-4 rounded-full" />
-                <span className="hidden md:inline">Sign Out</span>
+                <span className="hidden md:inline">{t('signOut')}</span>
               </button>
             ) : (
               <button 
@@ -1008,7 +1013,7 @@ function App() {
                 title="Sign In with Google"
               >
                 <LogIn size={16} />
-                <span className="hidden md:inline">Sign In</span>
+                <span className="hidden md:inline">{t('signIn')}</span>
               </button>
             )}
           </div>
